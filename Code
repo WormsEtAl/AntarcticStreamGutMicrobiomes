@@ -1,0 +1,2165 @@
+www.WormsEtAl.com/antarcticstreamgutmicrobiomes
+#Final Graphs and Statistics for "Host Identity is the Dominant Factor in the Assembly of Nematode and Tardigrade Gut Microbiomes in Taylor Valley Streams, Antarctica"
+
+
+################  16s Sequence Processing / Metabarcoding Pipeline ################
+##go to directory 
+cd Summer21/AGM_Dadaforwardtrim_primers_01
+
+#activate qiime
+source activate qiime2-2019.7
+
+#import into qiime
+qiime tools import --type 'SampleData[SequencesWithQuality]' --input-path /home/uflJPM/jparrufl/Spring21/P16onlyf --input-format CasavaOneEightSingleLanePerSampleDirFmt --output-path demux01.qza
+
+
+
+qiime demux summarize --i-data demux01.qza --o-visualization demux01.qzv
+
+#download in other termial window
+scp jparrufl@ron.sr.unh.edu:Summer21/AGM_Dadaforwardtrim_primers_01/demux01.qzv ./
+  
+  
+  #trim primer
+  qiime cutadapt trim-single --i-demultiplexed-sequences demux01.qza --p-cores 12 --p-adapter GTGYCAGCMGCCGCGGTAA --o-trimmed-sequences trimmed-seqs.qza --verbose
+
+#confirm that they tirmmed
+qiime demux summarize --i-data trimmed-seqs.qza --o-visualization trimmed-seqs.qzv
+
+scp jparrufl@ron.sr.unh.edu:Summer21/AGM_Dadaforwardtrim_primers_01/trimmed-seqs.qzv ./
+  
+  #second try
+  qiime cutadapt trim-single --i-demultiplexed-sequences deomux01.qza --p-cores 12 --p-adapter ATTAGAWACCCBDGTAGTCC --p-front GTGCCAGCMGCCGCGGTAA  --o-trimmed-sequences trimmed-seqs2.qza --verbose
+
+qiime demux summarize --i-data trimmed-seqs2.qza --o-visualization trimmed-seqs2.qzv
+scp jparrufl@ron.sr.unh.edu:Summer21/AGM_Dadaforwardtrim_primers_01/trimmed-seqs2.qzv ./
+  
+  nohup qiime dada2 denoise-single --i-demultiplexed-seqs trimmed-seqs2.qza --output-dir otu-dada2 --p-trim-left 0 --p-trunc-len 196 --p-n-threads 0 &
+  
+  qiime metadata tabulate --m-input-file otu-dada2/denoising_stats.qza --o-visualization stats
+scp jparrufl@ron.sr.unh.edu:Summer21/AGM_Dadaforwardtrim_primers_01/stats.qzv ./
+  
+  
+  qiime feature-table tabulate-seqs --i-data otu-dada2/representative_sequences.qza --o-visualization rep-seqs
+
+
+
+qiime feature-table summarize --i-table otu-dada2/table.qza --m-sample-metadata-file /home/uflJPM/jparrufl/Spring21/All_97paired/Mappingall16s.txt   --o-visualization tableFT
+
+
+qiime tools export --input-path otu-dada2/table.qza --output-path exported-feature-table
+
+cd exported-feature-table
+
+#convert to excel
+biom convert -i feature-table.biom -o ExportTable.tsv --to-tsv
+
+cd.. 
+
+#this gets you the dna-seq .fasta
+qiime tools export --input-path otu-dada2/representative_sequences.qza --output-path otu-dada2
+
+
+cd otu-dada2
+source activate qiime1
+export BLASTMAT=$HOME/Software/blast-2.2.22/data
+
+nohup assign_taxonomy.py -i dna-sequences.fasta -r /home/genome/egendron/Projects/v138/uclust_stable/formatted_v138_again.fasta -t /home/genome/egendron/Projects/v138/uclust_stable/taxonomy_id_map.txt -o v138_uclust &
+  
+  
+  
+  scp jparrufl@ron.sr.unh.edu:Summer21/AGM_Dadaforwardtrim_primers_01/exported-feature-table/ExportTable.tsv -otutable.txt
+scp jparrufl@ron.sr.unh.edu:Summer21/AGM_Dadaforwardtrim_primers_01/otu-dada2/v138_uclust/dna-sequences_tax_assignments.txt -taxstringfal.txt
+
+
+### new unassigned taxa
+cd otu-dada2
+source activate qiime1
+export BLASTMAT=$HOME/Software/blast-2.2.22/data
+
+nohup assign_taxonomy.py -i dna-sequences.fasta -r /home/genome/egendron/Projects/v138/uclust_stable/no-uncultured_ids.list_formatted_v138_again.fasta -t /home/genome/egendron/Projects/v138/uclust_stable/taxonomy_id_map.txt -o nounassigned &
+
+################  Load all libraries################
+library("ggplot2")
+library("vegan")
+library("DataCombine")
+library("randomcoloR")
+library("forcats")
+library("data.table")
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+library("phyloseq")
+library(tidyverse)
+library(lme4)
+library(lmerTest)
+library(emmeans)
+library(car)
+library(glmmTMB)
+library(RVAideMemoire)
+library(DHARMa)
+library(ggpubr)
+library(ggpubr)
+library(indicspecies)
+library(ape)
+library(ggsignif)
+
+
+
+
+
+################ Import 16s Data and Filter OTU table ################ 
+
+
+##Set working directory 
+setwd("~/Desktop/FinalPipelineNoUnassigned")
+
+
+##Import into R
+#otu table
+RawOtu <- read.table("otu.csv",sep=",", row.names=1,header=T, check.names=F,blank.lines.skip = FALSE)
+RawOtu <- RawOtu[,order(colnames(RawOtu))]
+#taxnomy strings
+taxmat <- read.table("tax.csv",sep=",", header=T,  row.names=1, check.names=F,blank.lines.skip = FALSE)
+#mapping file 
+mapping <- read.table("mapingfile.csv",sep=",", header=T,  row.names=1, check.names=F,blank.lines.skip = FALSE)
+
+##Import into phyloseq
+#otu table
+onlyOTU <- as.matrix(RawOtu)
+otu_sub  <- otu_table(onlyOTU, taxa_are_rows = T)
+#taxnomy strings
+t_tax <- as.matrix(taxmat)
+tax_sub = tax_table(t_tax)
+#mapping file
+metadata <- sample_data(mapping)
+
+##Create phyloseq object
+PhUnmodifed<- phyloseq(otu_sub,metadata,tax_sub)
+#Remove negative samples (zeroed out already)
+PhRemoveNeg <- subset_samples(PhUnmodifed, Animal != "Neg")
+#Remove the few nematodes from soil and not mats
+PhRemoveNegSoil <- subset_samples(PhRemoveNeg, Substrate == "mat")
+#Remove non bacteral reads
+PhOnlyBac <- subset_taxa(PhRemoveNegSoil, Domain=="Bacteria")
+
+#filter out low read count samples
+PhNotEud <- subset_samples(PhOnlyBac, Animal != "Eudorylaimus")
+PhNotEud <-prune_samples(sample_sums(PhNotEud)>=100, PhNotEud)
+PhOnlyEud <- subset_samples(PhOnlyBac, Animal == "Eudorylaimus")
+PhOnlyEud <-prune_samples(sample_sums(PhOnlyEud)>=10, PhOnlyEud)
+PhMerge <- merge_phyloseq(PhNotEud,PhOnlyEud)
+
+
+##Only clean nematods and mat
+PhOnlyClean10 <- subset_samples(PhMerge, Wash != "dirty")
+
+##only dirty and mat
+PhOnlyDirty10 <- subset_samples(PhMerge, Wash != "clean")
+
+
+
+PhOnlyClean10
+PhNotPlectus <- subset_samples(PhOnlyClean10, Animal == "Tardigrade")
+
+################ Figure 1 ################
+Made in ArcGIS using McMurdo LTER datasets
+################ Figure 2 ################ 
+alphastats <- estimate_richness(PhOnlyClean10,measures=c("Shannon","Observed","Chao1"))
+write.csv(alphastats,'AlphaForPhilNoUncult.csv')
+
+
+
+AlphaForPhilNoUncultWithMetadata <- read.csv("~/Desktop/FinalPipelineNoUnassigned/AlphaForPhilNoUncultWithMetadata.csv")
+alphadata <- AlphaForPhilNoUncultWithMetadata
+alphadata$SpeciesIDMatType <- factor(alphadata$SpeciesIDMatType,levels = c( "MatBlack", "MatOrange", "TardigradeBlack","TardigradeOrange",
+                                                                            "PlectusBlack", "PlectusOrange", "EudorylaimusBlack", "EudorylaimusOrange"))
+p <- ggplot(alphadata, aes(x=SpeciesIDMatType, y=Shannon,fill=MatType)) +  geom_boxplot(outlier.shape = NA,coef = 0.3)
+p <- p +theme_classic(15,) + ylab("Shannon Diversity Index") 
+p <- p+ geom_signif(comparisons = list(c("MatBlack", "MatOrange")), annotation="a",tip_length = 0) + geom_signif(comparisons = list(c("TardigradeBlack", "TardigradeOrange")), annotation="b", tip_length = 0, y_position = c(4)) + geom_signif(comparisons = list(c("PlectusBlack", "PlectusOrange")), annotation="c", tip_length = 0, y_position = c(3.5)) + geom_signif(comparisons = list(c("EudorylaimusBlack", "EudorylaimusOrange")), tip_length = 0, annotation="d", y_position = c(2.5))
+p <- p + theme(axis.title.x=element_blank(), axis.text.x = element_text(color="black"), axis.text.y = element_text(color="black") )
+p <- p + scale_fill_manual(values=c("gray50", "#ff7800")) +scale_x_discrete(labels = c('Black Mat','Orange Mat', 'Tardigrade','Tardigrade','Plectus', 'Plectus','Eudorylaimus', 'Eudorylaimus'))  + theme(legend.position = "none") +scale_y_continuous(limits = c(0,7), expand = c(0,0))
+p
+myPalette <- c ( "black", "#ff7800", "black", "#ff7800","black", "#ff7800","black", "#ff7800")
+p <- p + theme(axis.text.x = element_text(colour=myPalette))
+Shannon <- p + theme(axis.text.x = element_text(angle = 25, hjust=1))
+Shannon +   geom_signif(comparisons = list(c("MatBlack", "MatOrange")))
+Shannon
+
+
+
+alphadata <- AlphaForPhilIMetadata
+alphadata$SpeciesIDMatType <- factor(alphadata$SpeciesIDMatType,levels = c( "MatBlack", "MatOrange", "TardigradeBlack","TardigradeOrange",
+                                                                            "PlectusBlack", "PlectusOrange", "EudorylaimusBlack", "EudorylaimusOrange"))
+p <- ggplot(alphadata, aes(x=SpeciesIDMatType, y=Richness,fill=MatType)) +  geom_boxplot(outlier.shape = NA,coef = 0.3)
+p <- p +theme_classic(15,) + ylab("Richness") 
+p <- p+ geom_signif(comparisons = list(c("MatBlack", "MatOrange")), annotation="a", tip_length = 0,  y_position = c(610)) + geom_signif(comparisons = list(c("TardigradeBlack", "TardigradeOrange")), annotation="b", tip_length = 0, y_position = c(350)) + geom_signif(comparisons = list(c("PlectusBlack",  "EudorylaimusOrange")), annotation="c", tip_length = 0, y_position = c(200))
+p <- p + theme(axis.title.x=element_blank(), axis.text.x = element_text(color="black"), axis.text.y = element_text(color="black") )
+p <- p + scale_fill_manual(values=c("gray50", "#ff7800")) +scale_x_discrete(labels = c('Black Mat','Orange Mat', 'Tardigrade','Tardigrade','Plectus', 'Plectus','Eudorylaimus', 'Eudorylaimus'))  + theme(legend.position = c(.9,.9)) + scale_y_continuous(limits = c(0,750), expand = c(0, 0)) + labs(fill='Mat Type') + ylab("ASV Richness")
+p
+myPalette <- c ( "black", "#ff7800", "black", "#ff7800","black", "#ff7800","black", "#ff7800")
+p <- p + theme(axis.text.x = element_text(colour=myPalette))
+Richness <- p + theme(axis.text.x = element_text(angle = 25, hjust=1))
+Richness
+
+
+Figure2 <- ggarrange(Shannon, Richness,  labels = c("a.",  "b."), ncol = 2, nrow = 1)
+Figure2
+
+
+
+
+############## Figure 2 with hill numbers##########
+
+alphastats <- estimate_richness(PhOnlyClean10,measures=c("Shannon","Observed","Chao1"))
+write.csv(alphastats,'AlphaForPhilNoUncult.csv')
+
+
+
+AlphaForPhilNoUncultWithMetadata <- read.csv("~/Desktop/FinalPipelineNoUnassigned/HillNumbers.csv")
+alphadata <- AlphaForPhilNoUncultWithMetadata
+alphadata$SpeciesIDMatType <- factor(alphadata$SpeciesIDMatType,levels = c( "MatBlack", "MatOrange", "TardigradeBlack","TardigradeOrange",
+                                                                            "PlectusBlack", "PlectusOrange", "EudorylaimusBlack", "EudorylaimusOrange"))
+p <- ggplot(alphadata, aes(x=SpeciesIDMatType, y=Shannon,fill=MatType)) +  geom_boxplot(outlier.shape = NA,coef = 0.3)
+p <- p +theme_classic(15,) + ylab("Shannon Diversity Index (Hill Numbers)") 
+p <- p+ geom_signif(comparisons = list(c("MatBlack", "MatOrange")), annotation="a",tip_length = 0,  y_position = c(125)) + geom_signif(comparisons = list(c("TardigradeBlack", "TardigradeOrange")), annotation="b", tip_length = 0, y_position = c(45)) + geom_signif(comparisons = list(c("PlectusBlack", "PlectusOrange")), annotation="c", tip_length = 0, y_position = c(35)) + geom_signif(comparisons = list(c("EudorylaimusBlack", "EudorylaimusOrange")), tip_length = 0, annotation="d", y_position = c(25))
+p <- p + theme(axis.title.x=element_blank(), axis.text.x = element_text(color="black"), axis.text.y = element_text(color="black") )
+p <- p + scale_fill_manual(values=c("gray50", "#ff7800")) +scale_x_discrete(labels = c('Black Mat','Orange Mat', 'Tardigrade','Tardigrade','Plectus', 'Plectus','Eudorylaimus', 'Eudorylaimus'))  + theme(legend.position = "none") +scale_y_continuous(limits = c(0,150), expand = c(0,0))
+p
+myPalette <- c ( "black", "#ff7800", "black", "#ff7800","black", "#ff7800","black", "#ff7800")
+p <- p + theme(axis.text.x = element_text(colour=myPalette))
+Shannon <- p + theme(axis.text.x = element_text(angle = 25, hjust=1))
+Shannon +   geom_signif(comparisons = list(c("MatBlack", "MatOrange")))
+Shannon
+
+alphadata <- AlphaForPhilIMetadata
+alphadata$SpeciesIDMatType <- factor(alphadata$SpeciesIDMatType,levels = c( "MatBlack", "MatOrange", "TardigradeBlack","TardigradeOrange",
+                                                                            "PlectusBlack", "PlectusOrange", "EudorylaimusBlack", "EudorylaimusOrange"))
+p <- ggplot(alphadata, aes(x=SpeciesIDMatType, y=Richness,fill=MatType)) +  geom_boxplot(outlier.shape = NA,coef = 0.3)
+p <- p +theme_classic(15,) + ylab("Richness") 
+p <- p+ geom_signif(comparisons = list(c("MatBlack", "MatOrange")), annotation="a", tip_length = 0,  y_position = c(610)) + geom_signif(comparisons = list(c("TardigradeBlack", "TardigradeOrange")), annotation="b", tip_length = 0, y_position = c(250)) + geom_signif(comparisons = list(c("PlectusBlack",  "EudorylaimusOrange")), annotation="c", tip_length = 0, y_position = c(150))
+p <- p + theme(axis.title.x=element_blank(), axis.text.x = element_text(color="black"), axis.text.y = element_text(color="black") )
+p <- p + scale_fill_manual(values=c("gray50", "#ff7800")) +scale_x_discrete(labels = c('Black Mat','Orange Mat', 'Tardigrade','Tardigrade','Plectus', 'Plectus','Eudorylaimus', 'Eudorylaimus'))  + theme(legend.position = c(.9,.9)) + scale_y_continuous(limits = c(0,750), expand = c(0, 0)) + labs(fill='Mat Type') + ylab("ASV Richness")
+p
+myPalette <- c ( "black", "#ff7800", "black", "#ff7800","black", "#ff7800","black", "#ff7800")
+p <- p + theme(axis.text.x = element_text(colour=myPalette))
+Richness <- p + theme(axis.text.x = element_text(angle = 25, hjust=1))
+Richness
+
+
+Figure2 <- ggarrange(Shannon, Richness,  labels = c("a.",  "b."), ncol = 2, nrow = 1)
+Figure2
+
+Figure2 <- ggarrange(Shannon, Faiths, Richness, labels = c("a.",  "b.", "c."), ncol = 3, nrow = 1)
+Figure2
+
+
+################ Figure 3 ################ 
+
+#graph per animal all phyla
+ph4<- PhOnlyClean10
+ph4 <-prune_samples(sample_sums(ph4)>=1, ph4)
+ps4<- transform_sample_counts(ph4, function(x) x / sum(x))
+ps <- tax_glom(ps4, "Phylum")
+ps0 <- transform_sample_counts(ps, function(x) x / sum(x))
+ps1 <- merge_samples(ps0, "AnimalColor")
+#account for uneven numbersZ
+ps2 <- transform_sample_counts(ps1, function(x) x / sum(x))
+dat2 <- data.table(psmelt(ps2))
+# convert Phylum to a character vector from a factor because R
+dat2$Phylum <- as.character(dat2$Phylum)
+# group dataframe by Phylum, calculate median rel. abundance
+dat2[, median := median(Abundance, na.rm = TRUE), 
+     by = "Phylum"]
+# Change name to remainder of Phylum less than 1%
+dat2[(median <= 0.0035), Phylum := "Other Phyla "]
+dat2$Sample <- factor(dat2$Sample, levels = c(
+  "Mat_Black",
+  "Mat_Orange",
+  "Tardigrade_Black",
+  "Tardigrade_Orange",
+  "Plectus_Black",
+  "Plectus_Orange",
+  "Eudorylaimus_Black",
+  "Eudorylaimus_Orange"
+))
+
+#write.csv(dat2,'forordering.csv')
+
+dat2$Phylum <- factor(dat2$Phylum, levels = c(
+  "Other Phyla ", 
+  "Firmicutes", 
+  "Bdellovibrionota", 
+  "Acidobacteriota", 
+  "Actinobacteriota", 
+  "Myxococcota", 
+  "Chloroflexi", 
+  "Planctomycetota", 
+  "Verrucomicrobiota", 
+  "Bacteroidota", 
+  "Proteobacteria", 
+  "Cyanobacteria"
+
+))
+
+palette <- c( "#54555a", "#E7C144", "#D68092", "#CFE47E", "#7C8BA6" ,"#ACAC9A" ,"#B6E7D9", "#774C64", "#e79f55", "#4496e1", "#E44F9C", "#73E754" ,"#69E79B", "#73C8DC", "#E1A3DB", "#5DA3E9",
+              "#E7E2B0", "#885CD9", "#DA84DF", "#ACE4AA", "#DCDFE2", "#DCC1DC", "#E2AB92", "#8B38EA", "#D53D58", "#76A562", "#DDEE44", "#7874D1" ,"#DC47DA") #oldproeti E67A4C
+edes2 <- ggplot(dat2, aes(x = Sample, y = Abundance, fill = Phylum)) + geom_bar( stat = "identity")  + theme_classic(15) + scale_fill_manual(values=palette) ##was classic 22 ##chang back to 15
+allphyla <-  edes2 + theme(legend.position="bottom", axis.title.x=element_blank(),axis.text.x = element_text(color="black", margin = margin(t = 2)),axis.text.y = element_text(color="black")  )  + ylab("Relative Abundance") + labs(fill='Bacteria Phyla') +  scale_y_continuous(expand = c(0,0)) +scale_x_discrete( labels = c('Black Mat','Orange Mat','Tardigrade','Tardigrade','Plectus','Plectus','Eudorylaimus','Eudorylaimus'))
+myPalette <- c ( "black", "#ff7800", "black", "#ff7800","black", "#ff7800","black", "#ff7800")
+allphyla <- allphyla + theme(axis.text.x = element_text(colour=myPalette))
+allphyla <- allphyla + theme(legend.text = element_text(size=10), legend.title = element_text(size=15), axis.text.x = element_text(angle = 25, hjust = 1)) #chang legenge back to 10 legend title 15
+#allphyla <- allphyla + theme(legend.text = element_text(size=10), legend.title = element_text(size=15), axis.text.x = element_text(angle = 25, hjust = 1)) 
+allphyla <- allphyla + guides(fill = guide_legend(reverse = TRUE))
+allphyla 
+
+
+
+#graph per animal, genus now, only cyanos
+ph4<- PhOnlyClean10
+ph4 <-prune_samples(sample_sums(ph4)>=1, ph4)
+ps4<- transform_sample_counts(ph4, function(x) x / sum(x))
+ps <- tax_glom(ps4, "Genus")
+ps0 <- transform_sample_counts(ps, function(x) x / sum(x))
+ps1 <- merge_samples(ps0, "AnimalColor")
+#account for uneven numbersZ
+ps2 <- transform_sample_counts(ps1, function(x) x / sum(x))
+ps2 <- subset_taxa(ps2, Phylum=="Cyanobacteria")
+dat2 <- data.table(psmelt(ps2))
+# convert Phylum to a character vector from a factor because R
+dat2$Genus <- as.character(dat2$Genus)
+# group dataframe by Phylum, calculate median rel. abundance
+dat2[, median := median(Abundance, na.rm = TRUE), 
+     by = "Genus"]
+
+onlyPhormidium <- dat2[dat2$Genus == 'Phormidium']
+onlyPhormidium$median <- 12
+noPhormidium <- dat2[dat2$Genus != 'Phormidium']
+dat2 <- rbind(onlyPhormidium, noPhormidium)
+
+
+
+onlyPhormidium <- dat2[dat2$Genus == 'Candidatus']
+onlyPhormidium$median <- 0
+noPhormidium <- dat2[dat2$Genus != 'Candidatus']
+dat2 <- rbind(onlyPhormidium, noPhormidium)
+
+onlyPhormidium <- dat2[dat2$Genus == 'Synechococcus']
+onlyPhormidium$median <- 0
+noPhormidium <- dat2[dat2$Genus != 'Synechococcus']
+dat2 <- rbind(onlyPhormidium, noPhormidium)
+
+# Change name to remainder of Phylum less than 1%
+dat2[(median <= 0.00000000000000099), Genus := "Other Genera "]
+dat2$Sample <- factor(dat2$Sample, levels = c(
+  "Mat_Black",
+  "Mat_Orange",
+  "Tardigrade_Black",
+  "Tardigrade_Orange",
+  "Plectus_Black",
+  "Plectus_Orange",
+  "Eudorylaimus_Black",
+  "Eudorylaimus_Orange"
+))
+
+#0.00000000000000099
+
+#write.csv(dat2,'fororderingcyano.csv')
+
+dat2$Genus <- factor(dat2$Genus, levels = c(
+  "Other Genera ", 
+  "Calothrix", 
+  "Pseudanabaena", 
+  "Geitlerinema", 
+  "Wilmottia", 
+  "Kamptonema", 
+  "Scytonema", 
+  "Phormidium", 
+  "Tychonema", 
+  "Nostoc"
+  
+))
+
+#"Synechococcus", 
+
+#expression(italic("Synechococcus")), 
+nopre = c(
+  "Other Genera ", 
+  expression(italic("Calothrix")), 
+  expression(italic("Pseudanabaena")), 
+  expression(italic("Geitlerinema")), 
+  expression(italic("Wilmottia")), 
+  expression(italic("Kamptonema")), 
+  expression(italic("Scytonema")), 
+  expression(italic("Phormidium")), 
+  expression(italic("Tychonema")), 
+  expression(italic("Nostoc"))
+)
+
+#"#BFB6D5" from escond place
+palette <- c("#54555a", "#E08D4E", "#DEE24C", "#84E1A7" , "#CD9493" ,"#D1CF8C","774C64","#FFC446", "#76E25D","#236519","#BFB6D5")
+# at frontD94ADC
+edes2 <- ggplot(dat2, aes(x = Sample, y = Abundance, fill = Genus)) + geom_bar( stat = "identity")  + theme_classic(15) + scale_fill_manual(values=palette, labels =nopre) + theme(legend.text.align = 0)
+edes2 <- edes2+ geom_signif(comparisons = list(c("Mat_Black", "Mat_Orange")), annotation="a", tip_length = 0, y_position = c(0.48) ) + geom_signif(comparisons = list(c("Tardigrade_Black", "Eudorylaimus_Orange")), tip_length = 0, annotation="b", y_position = c(0.3))
+onlycyano <- edes2 + theme(axis.title.x=element_blank(),axis.text.x = element_text(color="black", margin = margin(t = 2)),axis.text.y = element_text(color="black")  )  + ylab("Relative Abundance") + labs(fill='Cyanobacteria Genera') +  scale_y_continuous(limits = c(0, 0.57), expand = c(0,0)) +scale_x_discrete(labels = c('Black Mat','Orange Mat','Tardigrade','Tardigrade','Plectus','Plectus','Eudorylaimus','Eudorylaimus'))
+myPalette <- c ( "black", "#ff7800", "black", "#ff7800","black", "#ff7800","black", "#ff7800")
+onlycyano <- onlycyano + theme(axis.text.x = element_text(colour=myPalette))
+onlycyano <- onlycyano + theme(legend.text = element_text(size=10), legend.title = element_text(size=15), axis.text.x = element_text(angle = 25, hjust = 1))  + guides(fill=guide_legend(ncol=2,reverse = TRUE))
+#onlycyano <- onlycyano + ylab(expression(atop("Relative Abundance", paste("By Cyanobacteria Genus"))))
+onlycyanoNoL <- onlycyano + theme(legend.position = "none") 
+my_legend <- get_legend(onlycyano)
+CyanoLeg<- as_ggplot(my_legend)
+onlycyano
+
+
+
+
+#graph per animal, genus now, only bacteria
+ph4<- PhOnlyClean10
+ph4 <-prune_samples(sample_sums(ph4)>=1, ph4)
+ps4<- transform_sample_counts(ph4, function(x) x / sum(x))
+ps <- tax_glom(ps4, "Genus")
+ps0 <- transform_sample_counts(ps, function(x) x / sum(x))
+ps1 <- merge_samples(ps0, "AnimalColor")
+#account for uneven numbersZ
+ps2 <- transform_sample_counts(ps1, function(x) x / sum(x))
+ps2 <- subset_taxa(ps2, Phylum=="Bacteroidota")
+dat2 <- data.table(psmelt(ps2))
+# convert Phylum to a character vector from a factor because R
+dat2$Genus <- as.character(dat2$Genus)
+# group dataframe by Phylum, calculate median rel. abundance
+dat2[, median := median(Abundance, na.rm = TRUE), 
+     by = "Genus"]
+# Change name to remainder of Phylum less than 1%
+
+
+onlyPhormidium <- dat2[dat2$Genus == 'Heliimonas']
+onlyPhormidium$median <- 12
+noPhormidium <- dat2[dat2$Genus != 'Heliimonas']
+dat2 <- rbind(onlyPhormidium, noPhormidium)
+
+
+onlyPhormidium <- dat2[dat2$Genus == 'OLB12'] #OLB12 was word genuys
+onlyPhormidium$median <- 0
+noPhormidium <- dat2[dat2$Genus != 'OLB12']
+dat2 <- rbind(onlyPhormidium, noPhormidium)
+
+
+dat2[(median <= 0.00029), Genus := "Other Genera "] #0.000199
+dat2$Sample <- factor(dat2$Sample, levels = c(
+  "Mat_Black",
+  "Mat_Orange",
+  "Tardigrade_Black",
+  "Tardigrade_Orange",
+  "Plectus_Black",
+  "Plectus_Orange",
+  "Eudorylaimus_Black",
+  "Eudorylaimus_Orange"
+))
+
+
+#write.csv(dat2,'fororderingbac.csv')
+
+
+
+
+dat2$Genus <- factor(dat2$Genus, levels = c(
+  "Other Genera ", 
+  "Heliimonas", 
+  "Chryseobacterium", 
+  "Rurimicrobium", 
+  "Pseudoflavitalea", 
+  "Larkinella", 
+  "Sediminibacterium", 
+  "Lewinella", 
+  "Cytophaga", 
+  "Flavihumibacter", 
+  "Arcicella", 
+  "Rudanella", 
+  "Segetibacter", 
+  "Edaphobaculum", 
+  "Terrimonas", 
+  "Hymenobacter", 
+  "Spirosoma", 
+  "Pedobacter", 
+  "Ferruginibacter", 
+  "Flavobacterium"
+  
+))
+
+
+nopre = c(
+  "Other Genera ", 
+  expression(italic("Heliimonas")), 
+  expression(italic( "Chryseobacterium")), 
+  expression(italic( "Rurimicrobium")), 
+  expression(italic("Pseudoflavitalea")), 
+  expression(italic("Larkinella")), 
+  expression(italic("Sediminibacterium")), 
+  expression(italic( "Lewinella")), 
+  expression(italic( "Cytophaga")), 
+  expression(italic( "Flavihumibacter")), 
+  expression(italic("Arcicella")), 
+  expression(italic( "Rudanella")), 
+  expression(italic("Segetibacter")), 
+  expression(italic("Edaphobaculum")), 
+  expression(italic("Terrimonas")), 
+  expression(italic("Hymenobacter")), 
+  expression(italic( "Spirosoma")), 
+  expression(italic( "Pedobacter")), 
+  expression(italic( "Ferruginibacter")), 
+  expression(italic("Flavobacterium"))
+)
+
+#legend.text = element_text(face = "italic")
+
+
+palette <- c( "#54555a","#70C3D7", "#DEEA44", "#DBB247","#6CE3E1","#8867DD", "#E3E0AE",   "#DBAD81", "#648EE7" , "#7AA56F", "#E4ACDE", "#DC4ADB", "#76EA9A", "#5AE5BF", "#7B376E", "#82D25E", "#DDC3BE", "#E44C90", "#61A6DA",
+              "#D2E588", "#E4704C", "#6DEF4C", "#9F8ED2", "#D6818F", "#DC85DB", "#C2BEDF", "#843BE2", "#CDE4E4", "#ACE4C1", "#DEEA44" )
+edes2 <- ggplot(dat2, aes(x = Sample, y = Abundance, fill = Genus)) + geom_bar( stat = "identity")  + theme_classic(15) + scale_fill_manual(values=palette,labels =nopre) + theme(legend.text.align = 0)
+edes2 <- edes2+ geom_signif(comparisons = list(c("Mat_Black", "Mat_Orange")), annotation="b", tip_length = 0, y_position = c(0.3) ) + geom_signif(comparisons = list(c("Tardigrade_Black", "Plectus_Orange")), tip_length = 0, annotation="a", y_position = c(0.6))+ geom_signif(comparisons = list(c("Eudorylaimus_Black", "Eudorylaimus_Orange")), tip_length = 0,  annotation="b", y_position = c(0.3) ) 
+onlybac <- edes2 + theme(axis.title.x=element_blank(),axis.text.x = element_text(color="black", margin = margin(t = 2)),axis.text.y = element_text(color="black")  )  + ylab("Relative Abundance") + labs(fill='Bacteroidota Genera') +  scale_y_continuous(limits = c(0, 0.65), expand = c(0,0)) +scale_x_discrete(labels = c('Black Mat','Orange Mat','Tardigrade','Tardigrade','Plectus','Plectus','Eudorylaimus','Eudorylaimus'))
+myPalette <- c ( "black", "#ff7800", "black", "#ff7800","black", "#ff7800","black", "#ff7800")
+onlybac <- onlybac + theme(axis.text.x = element_text(colour=myPalette))
+onlybac <- onlybac + theme(legend.text = element_text(size=10), legend.title = element_text(size=15), axis.text.x = element_text(angle = 25, hjust = 1)) + guides(fill=guide_legend(ncol=2,reverse = TRUE))
+onlybac
+#onlybac <- onlybac + ylab(expression(atop("Relative Abundance", paste("By Bacteroidota Genus"))))
+onlybacNoL <- onlybac + theme(legend.position = "none") 
+my_legend <- get_legend(onlybac)
+BacLeg<- as_ggplot(my_legend)
+
+
+
+#graph per animal, genus now, only protoeio
+ph4<- PhOnlyClean10
+ph4 <-prune_samples(sample_sums(ph4)>=1, ph4)
+ps4<- transform_sample_counts(ph4, function(x) x / sum(x))
+ps <- tax_glom(ps4, "Family")
+ps0 <- transform_sample_counts(ps, function(x) x / sum(x))
+ps1 <- merge_samples(ps0, "AnimalColor")
+#account for uneven numbersZ
+ps2 <- transform_sample_counts(ps1, function(x) x / sum(x))
+ps2 <- subset_taxa(ps2, Phylum=="Proteobacteria")
+dat2 <- data.table(psmelt(ps2))
+# convert Phylum to a character vector from a factor because R
+dat2$Family <- as.character(dat2$Family)
+# group dataframe by Phylum, calculate median rel. abundance
+dat2[, median := median(Abundance, na.rm = TRUE), 
+     by = "Family"]
+# Change name to remainder of Phylum less than 1%
+dat2[(median <= 0.0010), Family := "Other Familes "] #0.0008
+dat2$Sample <- factor(dat2$Sample, levels = c(
+  "Mat_Black",
+  "Mat_Orange",
+  "Tardigrade_Black",
+  "Tardigrade_Orange",
+  "Plectus_Black",
+  "Plectus_Orange",
+  "Eudorylaimus_Black",
+  "Eudorylaimus_Orange"
+))
+
+
+
+#write.csv(dat2,'fororderingpro.csv')
+
+
+dat2$Family <- factor(dat2$Family, levels = c(
+"Other Familes ", 
+"Azospirillaceae", 
+"Alcaligenaceae", 
+"Pseudomonadaceae", 
+"Rickettsiaceae", 
+"Sutterellaceae", 
+"Devosiaceae", 
+"Rhizobiaceae", 
+"Oxalobacteraceae", 
+"Nitrosomonadaceae", 
+"Rhodocyclaceae", 
+"Xanthomonadaceae", 
+"Rhodanobacteraceae", 
+"Acetobacteraceae", 
+"Caulobacteraceae", 
+"Rhodobacteraceae", 
+"Sphingomonadaceae", 
+"Comamonadaceae"
+))
+
+palette <- c( "#54555a", "#E5E4BB", "#68EAA0", "#60B79B","#fdff06", "#ABAB9A" ,"#8AA662", "#DC4ADB", "#833AE2", "#DCAE41" ,"#D5E77D", "#7A4282" ,"#E6704B", "#DAAADC", "#BCE7DE" ,"#7E717D", "#DCA383",
+              "#aca0dc", "#66EDDA" ,"#6DEF4C", "#64A5DA", "#8690DF", "#B7C5E0", "#D67D8F", "#B1E9AC", "#80D360", "#8968E1", "#DECA7E", "#DEEB40", "#69D3E4")
+edes2 <- ggplot(dat2, aes(x = Sample, y = Abundance, fill = Family)) + geom_bar( stat = "identity")  + theme_classic(15) + scale_fill_manual(values=palette) 
+edes2 <- edes2+ geom_signif(comparisons = list(c("Mat_Black", "Plectus_Orange")), tip_length = 0, annotation="b", y_position = c(0.4) ) + geom_signif(comparisons = list(c("Eudorylaimus_Black", "Eudorylaimus_Orange")), annotation="a", tip_length = 0, y_position = c(0.75))
+onlypro <- edes2 + theme(axis.title.x=element_blank(),axis.text.x = element_text(color="black", margin = margin(t = 2)),axis.text.y = element_text(color="black")  )  + ylab("Relative Abundance") + labs(fill='Proteobacteria Families') +  scale_y_continuous(limits = c(0, 0.8), expand = c(0,0)) +scale_x_discrete(labels = c('Black Mat','Orange Mat','Tardigrade','Tardigrade','Plectus','Plectus','Eudorylaimus','Eudorylaimus'))
+myPalette <- c ( "black", "#ff7800", "black", "#ff7800","black", "#ff7800","black", "#ff7800")
+onlypro <- onlypro + theme(axis.text.x = element_text(colour=myPalette))
+onlypro <- onlypro + theme(legend.text = element_text(size=10), legend.title = element_text(size=15), axis.text.x = element_text(angle = 25, hjust = 1)) +guides(fill=guide_legend(ncol=2,reverse = TRUE))
+onlypro
+onlyproNoL <- onlypro + theme(legend.position = "none") 
+my_legend <- get_legend(onlypro)
+ProLeg<- as_ggplot(my_legend)              
+#E44B91
+
+#make into one big graph, good version
+rightright <- ggarrange(CyanoLeg, BacLeg, ProLeg,  ncol = 1, nrow = 3)
+right <- ggarrange(onlycyanoNoL, onlybacNoL, onlyproNoL,   labels = c("b.", "c.", "d."),  ncol = 1, nrow = 3)
+Figure3 <- ggarrange(allphyla, right,rightright,  labels = c("a.",  "", ""), ncol = 3, nrow = 1, widths = c(1.5, 1, 0.7))
+Figure3
+
+
+
+
+
+
+
+################ Figure 4 ################ 
+library(extrafont)
+library(extrafontdb)
+
+fonts()
+font_import()
+
+PhOnlyClean10
+ps0 <- PhOnlyClean10
+ps0<- transform_sample_counts(ps0, function(x) x / sum(x))
+ps0 <- tax_glom(ps0, "Genus")
+ps0 <- transform_sample_counts(ps0, function(x) x / sum(x))
+
+OTU1 = as(otu_table(ps0), "matrix")
+write.csv(OTU1,'export.csv')
+
+Modify in excel to match their "unique" formatting
+https://huttenhower.sph.harvard.edu/galaxy/
+
+  
+LDAforR <- read.csv("~/Desktop/FinalPipelineNoUnassigned/LDAforr.csv")
+LDAforR <- LDAforR
+LDAforR$Feature<- factor(LDAforR$Feature,levels = c(
+  "Planctomycetota Planctomycetes Gemmatales Gemmataceae (w)",
+  "Proteobacteria Alphaproteobacteria Rickettsiales (a5)",
+  "Planctomycetota Planctomycetes Gemmatales (x)",
+  "Planctomycetota Planctomycetes Gemmatales Gemmataceae Fimbriiglobus Fimbriiglobus (v)",
+  "Planctomycetota Planctomycetes     ",
+  "Planctomycetota      ",
+  "Proteobacteria Gammaproteobacteria Legionellales (b4)",
+  "Proteobacteria Gammaproteobacteria Legionellales Legionellaceae Legionella Legionella (b2)",
+  "Acidobacteriota      ",
+  "Acidobacteriota Blastocatellia     ",
+  "Proteobacteria Alphaproteobacteria Rhizobiales (a2)",
+  "Proteobacteria Alphaproteobacteria Rhizobiales Rhizobiaceae (a1)",
+  "Proteobacteria Gammaproteobacteria Legionellales Legionellaceae (b2)",
+  "Proteobacteria Alphaproteobacteria Paracaedibacterales (a0)",
+  "Proteobacteria Alphaproteobacteria Paracaedibacterales Paracaedibacteraceae Candidatus Candidatus (y)",
+  "Proteobacteria Alphaproteobacteria Paracaedibacterales Paracaedibacteraceae (z)",
+  "Proteobacteria Gammaproteobacteria Gammaproteobacteria Other (a9)",
+  "Proteobacteria Gammaproteobacteria Gammaproteobacteria (b1)",
+  "Proteobacteria Gammaproteobacteria Gammaproteobacteria Other Other Other (b)",
+  "Proteobacteria Gammaproteobacteria     ",
+  "Proteobacteria      ",
+  "Bacteroidota Bacteroidia Cytophagales Spirosomaceae Larkinella Larkinella (c)",
+  "Bacteroidota Bacteroidia Cytophagales Spirosomaceae (d)",
+  "Bacteroidota Bacteroidia Cytophagales (e) ",
+  "Bacteroidota Bacteroidia Flavobacteriales Weeksellaceae Chryseobacterium Chryseobacterium (h)",
+  "Bacteroidota Bacteroidia Flavobacteriales Weeksellaceae (i)",
+  "Proteobacteria Gammaproteobacteria Burkholderiales Comamonadaceae Variovorax Variovorax (a8)",
+  "Bacteroidota Bacteroidia Flavobacteriales Flavobacteriaceae Flavobacterium Flavobacterium (f)",
+  "Bacteroidota Bacteroidia Flavobacteriales Flavobacteriaceae (g)",
+  "Bacteroidota Bacteroidia Flavobacteriales (j)",
+  "Bacteroidota Bacteroidia Chitinophagales Chitinophagaceae (a)",
+  "Bacteroidota Bacteroidia Chitinophagales (b)",
+  "Proteobacteria Alphaproteobacteria Rhodobacterales Rhodobacteraceae (a3)",
+  "Proteobacteria Alphaproteobacteria Rhodobacterales (a4)",
+  "Cyanobacteria Cyanobacteriia Oxyphotobacteria (u)",
+  "Cyanobacteria Cyanobacteriia Oxyphotobacteria Other (t)",
+  "Cyanobacteria Cyanobacteriia Oxyphotobacteria Other Other Other (s)",
+  "Cyanobacteria Cyanobacteriia Leptolyngbyales Leptolyngbyaceae (q)",
+  "Cyanobacteria Cyanobacteriia Leptolyngbyales Leptolyngbyaceae Phormidium Phormidium (p)",
+  "Proteobacteria Alphaproteobacteria Sphingomonadales Sphingomonadaceae (a6)",
+  "Proteobacteria Alphaproteobacteria Sphingomonadales (a7)",
+  "Cyanobacteria Cyanobacteriia Leptolyngbyales (r)",
+  "Cyanobacteria Cyanobacteriia Cyanobacteriales Other Other Other (m)",
+  "Cyanobacteria Cyanobacteriia Cyanobacteriales Other (n)",
+  "Cyanobacteria Cyanobacteriia Cyanobacteriales Nostocaceae Nostoc Nostoc (k)",
+  "Cyanobacteria Cyanobacteriia Cyanobacteriales Nostocaceae (l)",
+  "Cyanobacteria Cyanobacteriia Cyanobacteriales (o)",
+  "Cyanobacteria Cyanobacteriia     ",
+  "Cyanobacteria      ",
+  "Phylum Class Order Family Genus"
+  
+))
+
+
+test = c(
+  "Planctomycetota Planctomycetes      Gemmatales          Gemmataceae",
+  "Proteobacteria  Alphaproteobacteria Rickettsiales",
+  "Planctomycetota Planctomycetes      Gemmatales",
+  expression(paste("Planctomycetota Planctomycetes      Gemmatales          Gemmataceae         ",italic("Fimbriiglobus"))),
+  "Planctomycetota Planctomycetes     ",
+  "Planctomycetota      ",
+  "Proteobacteria  Gammaproteobacteria Legionellales",
+expression(paste("Proteobacteria  Gammaproteobacteria Legionellales       Legionellaceae      ",italic("Legionella"))),
+  "Acidobacteriota      ",
+  "Acidobacteriota Blastocatellia     ",
+  "Proteobacteria  Alphaproteobacteria Rhizobiales",
+  "Proteobacteria  Alphaproteobacteria Rhizobiales         Rhizobiaceae",
+  "Proteobacteria  Gammaproteobacteria Legionellales       Legionellaceae",
+  "Proteobacteria  Alphaproteobacteria Paracaedibacterales",
+expression(paste("Proteobacteria  Alphaproteobacteria Paracaedibacterales Paracaedibacteraceae ",italic("Candidatus"))),
+  "Proteobacteria  Alphaproteobacteria Paracaedibacterales Paracaedibacteraceae",
+  "Proteobacteria  Gammaproteobacteria Gammaproteobacteria Other",
+  "Proteobacteria  Gammaproteobacteria Gammaproteobacteria",
+  expression(paste("Proteobacteria  Gammaproteobacteria Gammaproteobacteria Other                ",italic("Other"))),
+  "Proteobacteria  Gammaproteobacteria     ",
+  "Proteobacteria      ",
+  expression(paste("Bacteroidota    Bacteroidia         Cytophagales        Spirosomaceae        ",italic("Larkinella"))),
+  "Bacteroidota    Bacteroidia         Cytophagales        Spirosomaceae",
+  "Bacteroidota    Bacteroidia         Cytophagales",
+  expression(paste("Bacteroidota    Bacteroidia         Flavobacteriales    Weeksellaceae        ",italic("Chryseobacterium"))),
+  "Bacteroidota    Bacteroidia         Flavobacteriales    Weeksellaceae",
+  expression(paste("Proteobacteria  Gammaproteobacteria Burkholderiales     Comamonadaceae       ",italic("Variovorax"))),
+  expression(paste("Bacteroidota    Bacteroidia         Flavobacteriales    Flavobacteriaceae    ",italic("Flavobacterium"))),
+  "Bacteroidota    Bacteroidia         Flavobacteriales    Flavobacteriaceae",
+  "Bacteroidota    Bacteroidia         Flavobacteriales",
+  "Bacteroidota    Bacteroidia         Chitinophagales     Chitinophagaceae",
+  "Bacteroidota    Bacteroidia         Chitinophagales",
+  "Proteobacteria  Alphaproteobacteria Rhodobacterales     Rhodobacteraceae",
+  "Proteobacteria  Alphaproteobacteria Rhodobacterales",
+  "Cyanobacteria   Cyanobacteriia      Oxyphotobacteria",
+  "Cyanobacteria   Cyanobacteriia      Oxyphotobacteria    Other",
+  expression(paste("Cyanobacteria   Cyanobacteriia      Oxyphotobacteria    Other                ",italic("Other"))),
+  "Cyanobacteria   Cyanobacteriia      Leptolyngbyales     Leptolyngbyaceae",
+  expression(paste("Cyanobacteria   Cyanobacteriia      Leptolyngbyales     Leptolyngbyaceae     ",italic("Phormidium"))),
+  "Proteobacteria  Alphaproteobacteria Sphingomonadales    Sphingomonadaceae",
+  "Proteobacteria  Alphaproteobacteria Sphingomonadales",
+  "Cyanobacteria   Cyanobacteriia      Leptolyngbyales",
+  expression(paste("Cyanobacteria   Cyanobacteriia      Cyanobacteriales    Other                ", italic("Other"))),
+  "Cyanobacteria   Cyanobacteriia      Cyanobacteriales    Other",
+  expression(paste("Cyanobacteria   Cyanobacteriia      Cyanobacteriales    Nostocaceae          ", italic("Nostoc"))),
+  "Cyanobacteria   Cyanobacteriia      Cyanobacteriales    Nostocaceae",
+  "Cyanobacteria   Cyanobacteriia      Cyanobacteriales",
+  "Cyanobacteria   Cyanobacteriia",
+  "Cyanobacteria",
+  expression(paste("Phylum          Class               Order               Family              Genus"))
+  
+  )
+#expression(paste("Planctomycetota", italic("Planctomycetes"),"Gemmatales Gemmataceae (w)")),
+
+
+LDAforR$HostID<- factor(LDAforR$HostID,levels = c(
+  "Mat",
+  "Tardigrade",
+  "Plectus",
+  "Eudorylaimus"))
+
+#fig4a <- ggplot(LDAforR, aes( y=LDA, x=Feature, fill= HostID)) + geom_bar(position="dodge", stat="identity") + theme_classic(15)+
+#  theme(legend.text = element_text(size=10), legend.title = element_text(size=15), axis.text.x = element_text(angle = 90, hjust = 1)) +   coord_flip(ylim = c(4,5.5))
+#fig4a
+
+#fig4a <- ggplot(LDAforR, aes( y=LDA, x=Feature, fill= HostID)) + geom_bar(position="dodge", stat="identity") + theme_classic(15)+theme(legend.text = element_text(size=10), legend.title = element_text(size=15), axis.text.x = element_text(angle = 0)) +  scale_y_reverse() + coord_flip(ylim = c(5.4,4),expand = c(0,0)) + scale_fill_manual(values=c("#187D1B","#BB28BA","#0034F7","#FC1520"))  + scale_x_discrete(labels =test, position = "top")
+#fig4a <- fig4a + theme(axis.title.y=element_blank(),axis.text.x = element_text(color="black", margin = margin(t = 2)),axis.text.y = element_text(color="black",family = "Menlo")  ) + ylab("LDA Effect Size Score (log scale)") + theme(legend.position="bottom")
+
+
+
+#fig4a + geom_text(aes(label = Delim,))
+  
+
+
+#### my edits
+#fig4a <- ggplot(LDAforR, aes( y=LDA, x=Feature, fill= HostID)) + geom_bar(position="dodge", stat="identity") + theme_classic(15)+theme(legend.text = element_text(size=10), legend.title = element_text(size=15), axis.text.x = element_text(angle = 0)) +  scale_y_reverse() + coord_flip(ylim = c(5.4,4),expand = c(0,0)) + scale_fill_manual(values=c("#187D1B","#BB28BA","#0034F7","#FC1520"))  + scale_x_discrete(labels =test, position = "top")
+#fig4a <- fig4a + theme(axis.title.y=element_blank(),axis.text.x = element_text(color="black", margin = margin(t = 2)),axis.text.y = element_text(color="black",family = "Menlo")  ) + ylab("LDA Effect Size Score (log scale)") + theme(legend.position="bottom")
+#fig4a <- fig4a + geom_text(aes(label = Delim,y=4.02))
+
+fig4a 
+
+## son version
+fig4a <- ggplot(LDAforR, aes( y=LDA, x=Feature, fill= HostID)) + geom_bar(position="dodge", stat="identity") + theme_classic(15)+theme(legend.text = element_text(size=10), legend.title = element_text(size=15), axis.text.x = element_text(angle = 0)) +  scale_y_reverse() + coord_flip(ylim = c(5.4,4),expand = c(0,0)) + scale_fill_manual(values=c("#CED4FB","#EDD4F0","#D5E5D2","#EFCDCD")) + scale_x_discrete(labels =test, position = "top")
+fig4a <- fig4a + theme(axis.title.y=element_blank(),axis.text.x = element_text(color="black", margin = margin(t = 2)),axis.text.y = element_text(color="black",family = "Menlo",size=9)  ) + ylab("LDA Effect Size Score (log scale)") + theme(legend.position="bottom")
+fig4a <- fig4a + geom_text(aes(label = Delim,y=4.07))
+
+fig4a 
+
+#BB28BA tardigrade #0034F7 plectus #FC1520 eud 
+#BB28BA tardigrade #0034F7 plectus #FC1520 eud
+#not pale scale_fill_manual(values=c("#0034F7","#BB28BA","#187D1B","#FC1520"))
+#pale scale_fill_manual(values=c("##CED4FB","#EDD4F0","#D5E5D2","#EFCDCD"))
+#geom_text(data = LDAforR,  y=0.5, label = LDAforR$LDA)
+                  
+), position = position_dodge(0.9), size = 2.25, angle = 90,  color = "white", hjust = 'left'
+                  
+                  
+fig4a + geom_text(aes(label = LDA, y=0.1), position = position_dodge(0.9), size = 3, color = "black", vjust=0)
+
+
+
+fig4afixedleg =fig4a + theme(legend.title = element_blank()) 
+my_legend <- get_legend(fig4afixedleg)
+fig4leg<- as_ggplot(my_legend) 
+fig4a <- fig4a + theme(legend.position = "none") 
+
+fig4b <- ggplot() + theme_void()
+
+Figure4 <- ggarrange(fig4b, fig4a, fig4leg,fig4b, ncol = 2, nrow = 2 ,widths = c(0.8, 1.5), heights = c(1,0.05), labels = c("a.", "b."))
+Figure4
+
+Figure4verticle <- ggarrange(fig4b, fig4a, fig4leg,fig4b, ncol = 2, nrow = 2 ,widths = c(0.8, 1.5), heights = c(1,0.05), labels = c("a.", "b."))
+Figure4verticle
+
+   
+
+#red eud FC1520
+#green mat 187D1B
+#purple tardigrsde BB28BA
+#blu eplectus 0034F7
+
+
+
+
+
+#### table verison not monospaced
+
+tablemaybedelte <- read.csv("~/Desktop/FinalPipelineNoUnassigned/tablemaybedelte.csv")
+
+p2 <- ggtexttable(tablemaybedelte)
+
+plot <- ggarrange(p1, p2,
+                  ncol = 1, nrow = 2,
+                  heights = c(10,3))
+plot
+
+LDAforR <- read.csv("~/Desktop/FinalPipelineNoUnassigned/LDAforr.csv")
+LDAforR <- LDAforR
+LDAforR$Feature<- factor(LDAforR$Feature,levels = c(
+  "Planctomycetota Planctomycetes Gemmatales Gemmataceae (w)",
+  "Proteobacteria Alphaproteobacteria Rickettsiales (a5)",
+  "Planctomycetota Planctomycetes Gemmatales (x)",
+  "Planctomycetota Planctomycetes Gemmatales Gemmataceae Fimbriiglobus Fimbriiglobus (v)",
+  "Planctomycetota Planctomycetes     ",
+  "Planctomycetota      ",
+  "Proteobacteria Gammaproteobacteria Legionellales (b4)",
+  "Proteobacteria Gammaproteobacteria Legionellales Legionellaceae Legionella Legionella (b2)",
+  "Acidobacteriota      ",
+  "Acidobacteriota Blastocatellia     ",
+  "Proteobacteria Alphaproteobacteria Rhizobiales (a2)",
+  "Proteobacteria Alphaproteobacteria Rhizobiales Rhizobiaceae (a1)",
+  "Proteobacteria Gammaproteobacteria Legionellales Legionellaceae (b2)",
+  "Proteobacteria Alphaproteobacteria Paracaedibacterales (a0)",
+  "Proteobacteria Alphaproteobacteria Paracaedibacterales Paracaedibacteraceae Candidatus Candidatus (y)",
+  "Proteobacteria Alphaproteobacteria Paracaedibacterales Paracaedibacteraceae (z)",
+  "Proteobacteria Gammaproteobacteria Gammaproteobacteria Other (a9)",
+  "Proteobacteria Gammaproteobacteria Gammaproteobacteria (b1)",
+  "Proteobacteria Gammaproteobacteria Gammaproteobacteria Other Other Other (b)",
+  "Proteobacteria Gammaproteobacteria     ",
+  "Proteobacteria      ",
+  "Bacteroidota Bacteroidia Cytophagales Spirosomaceae Larkinella Larkinella (c)",
+  "Bacteroidota Bacteroidia Cytophagales Spirosomaceae (d)",
+  "Bacteroidota Bacteroidia Cytophagales (e) ",
+  "Bacteroidota Bacteroidia Flavobacteriales Weeksellaceae Chryseobacterium Chryseobacterium (h)",
+  "Bacteroidota Bacteroidia Flavobacteriales Weeksellaceae (i)",
+  "Proteobacteria Gammaproteobacteria Burkholderiales Comamonadaceae Variovorax Variovorax (a8)",
+  "Bacteroidota Bacteroidia Flavobacteriales Flavobacteriaceae Flavobacterium Flavobacterium (f)",
+  "Bacteroidota Bacteroidia Flavobacteriales Flavobacteriaceae (g)",
+  "Bacteroidota Bacteroidia Flavobacteriales (j)",
+  "Bacteroidota Bacteroidia Chitinophagales Chitinophagaceae (a)",
+  "Bacteroidota Bacteroidia Chitinophagales (b)",
+  "Proteobacteria Alphaproteobacteria Rhodobacterales Rhodobacteraceae (a3)",
+  "Proteobacteria Alphaproteobacteria Rhodobacterales (a4)",
+  "Cyanobacteria Cyanobacteriia Oxyphotobacteria (u)",
+  "Cyanobacteria Cyanobacteriia Oxyphotobacteria Other (t)",
+  "Cyanobacteria Cyanobacteriia Oxyphotobacteria Other Other Other (s)",
+  "Cyanobacteria Cyanobacteriia Leptolyngbyales Leptolyngbyaceae (q)",
+  "Cyanobacteria Cyanobacteriia Leptolyngbyales Leptolyngbyaceae Phormidium Phormidium (p)",
+  "Proteobacteria Alphaproteobacteria Sphingomonadales Sphingomonadaceae (a6)",
+  "Proteobacteria Alphaproteobacteria Sphingomonadales (a7)",
+  "Cyanobacteria Cyanobacteriia Leptolyngbyales (r)",
+  "Cyanobacteria Cyanobacteriia Cyanobacteriales Other Other Other (m)",
+  "Cyanobacteria Cyanobacteriia Cyanobacteriales Other (n)",
+  "Cyanobacteria Cyanobacteriia Cyanobacteriales Nostocaceae Nostoc Nostoc (k)",
+  "Cyanobacteria Cyanobacteriia Cyanobacteriales Nostocaceae (l)",
+  "Cyanobacteria Cyanobacteriia Cyanobacteriales (o)",
+  "Cyanobacteria Cyanobacteriia     ",
+  "Cyanobacteria      "
+))
+
+
+LDAforR$HostID<- factor(LDAforR$HostID,levels = c(
+  "Mat",
+  "Tardigrade",
+  "Plectus",
+  "Eudorylaimus"))
+
+
+fig4a <- ggplot(LDAforR, aes( y=LDA, x=Feature, fill= HostID)) + geom_bar(position="dodge", stat="identity") + theme_classic(15)+theme(legend.text = element_text(size=10), legend.title = element_text(size=15), axis.text.x = element_text(angle = 0)) +  scale_y_reverse() + coord_flip(ylim = c(5.4,4),expand = c(0,0)) + scale_fill_manual(values=c("#187D1B","#BB28BA","#0034F7","#FC1520"))  + scale_x_discrete(position = "top")
+fig4a <- fig4a + theme(axis.title.y=element_blank(),axis.text.x = element_text(color="black", margin = margin(t = 2)),axis.text.y = element_text(color="black")  ) + ylab("LDA Effect Size Score (log scale)") + theme(legend.position="bottom")
+
+fig4a
+
+
+grid.table(tablemaybedelte) 
+
+
+
+### 7/27/21
+df <- structure(list(year = 1998:2007, work = c(0L, 4L, 0L, 1L, 0L, 0L, 1L, 2L, 2L, 3L), confid = c(0L, 0L, 0L, 0L, 0L, 2L, 0L, 0L, 3L, 0L), jrs = c(0L, 1L, 0L, 0L, 1L, 9L, 6L, 4L, 21L, 2L)), .Names = c("year", "work", "confid", "jrs"), class = "data.frame", row.names = c(NA, -10L))
+
+df2 <- LDAforR
+
+library(ggplot2)
+library(reshape)
+md <- melt(df, id=(c("year")))
+
+library(grid)
+library(gridExtra)
+
+# Function to extract legend
+# https://stackoverflow.com/a/13650878/496488
+g_legend <- function(a.gplot){
+  tmp <- ggplot_gtable(ggplot_build(a.gplot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend)}
+
+p = ggplot(data=md, aes(x=year, y=value, fill=variable) ) + 
+  geom_bar(stat="identity") +labs(fill="") 
+
+p
+
+p2 <- ggplot(LDAforR, aes( y=LDA, x=Feature, fill= HostID)) + geom_bar(position="dodge", stat="identity")+labs(fill="") 
+
+p2
+
+
+# Extract the legend as a separate grob
+leg = g_legend(p)
+leg2 = g_legend(p2)
+
+
+# Create a table grob
+tab = t(df)
+tab = tableGrob(tab, rows=NULL)
+tab$widths <- unit(rep(1/ncol(tab), ncol(tab)), "npc")
+
+grid.arrange(arrangeGrob(nullGrob(), 
+                         p + guides(fill=FALSE) + 
+                           theme(axis.text.x=element_blank(),
+                                 axis.title.x=element_blank(),
+                                 axis.ticks.x=element_blank()),
+                         widths=c(1,8)), 
+             arrangeGrob(arrangeGrob(nullGrob(),leg,heights=c(1,10)), #Can ignore this change
+                         tab, nullGrob(), widths=c(10,45,2)), #'6' to '10' is the vital change
+             heights=c(5,1)) #Modified this to improve spacing between table and graph
+
+tab2 = t(df2)
+tab2 = tableGrob(tab2, rows=NULL)
+tab2$widths <- unit(rep(1/ncol(tab2), ncol(tab2)), "npc")
+
+grid.arrange(arrangeGrob(nullGrob(), 
+                         p2 + guides(fill=FALSE) + 
+                           theme(axis.text.x=element_blank(),
+                                 axis.title.x=element_blank(),
+                                 axis.ticks.x=element_blank()),
+                         widths=c(1,8)), 
+             arrangeGrob(arrangeGrob(nullGrob()), #Can ignore this change
+                         tab, nullGrob(), widths=c(10,45,2)), #'6' to '10' is the vital change
+             heights=c(5,1)) #Modified this to improve spacing between table and graph
+
+library(grid)
+library(gridExtra)
+library(ggplot2)
+library(tibble)
+library(gtable)
+dat <- tibble::rownames_to_column(mtcars, "car") #convert rownames to first col
+
+plot1 <- ggplot(dat, aes(car, mpg)) +
+  geom_bar(stat = "identity") +
+  coord_flip()
+
+g1 <- ggplotGrob(plot1)
+tb1 <- tableGrob(dat$cyl, theme = ttheme_default(10))
+tb1$heights = unit(rep(1/(nrow(tb1)), nrow(tb1)), "npc")
+tb1$widths = unit.pmax(tb1$widths, unit(2, "lines"))
+g1 <- gtable_add_cols(g1, sum(tb1$widths))
+g1 <- gtable_add_grob(g1, grobs = tb1, t=6, l=ncol(g1), b=6, r=ncol(g1))
+
+grid.newpage()
+grid.draw(g1)
+
+
+
+ggplot(as.data.frame(table(LDAforR)), aes(x=LDA, y = Freq, fill=Feature)) + 
+  geom_bar(stat="identity")
+
+library(gridExtra)
+library(grid)
+d <- head(iris[,1:3])
+pp <- grid.table(tablemaybedelte)
+
+Figuresup <- ggarrange(fig4a, pp,  labels = c("a.",  "b."), ncol = 2, nrow = 1)
+Figuresup
+
+
+
+################ # of ___ reads ################ 
+PhOnlyClean10
+ps0 <- PhOnlyClean10
+ps0 <- tax_glom(ps0, "Domain")
+dat2 <- data.table(psmelt(ps0))
+sum(dat2$Abundance)
+
+################ 16s Indicator Species ################ 
+PhOnlyClean10
+ps0 <- PhOnlyClean10
+ps0<- transform_sample_counts(ps0, function(x) x / sum(x))
+ps0 <- tax_glom(ps0, "Phylum")
+ps0 <- transform_sample_counts(ps0, function(x) x / sum(x))
+OTU1 = as(otu_table(ps0), "matrix")
+write.csv(OTU1,'indicator.csv')
+
+trasnform in excel
+add metadata with vlookup
+
+
+pc = read.csv("indicator.csv", header= TRUE)
+abund = pc[,3:ncol(pc)]
+timeS = pc$HostID
+inv = multipatt(abund, timeS, func = "r.g", control = how(nperm=9999))
+summary(inv)
+################ Alpha Diversity Stats Figure 2 ################ 
+s
+################ 16s Beta Diversity Stats ################ 
+PhOnlyClean10 <- subset_samples(PhMerge, Wash != "dirty")
+PhOnlyClean10 <- subset_samples(PhOnlyClean10, Animal != "Mat")
+#PhOnlyClean10Backup <- PhOnlyClean10
+
+RELPhOnlyClean10 <- transform_sample_counts(PhOnlyClean10, function(x) x / sum(x))
+
+
+
+#this broke for some reason
+wunifrac_dist = phyloseq::distance(RELPhOnlyClean10, method="bray", weighted=F)
+ordination = ordinate(RELPhOnlyClean10, method="PCoA", distance=wunifrac_dist)
+plotbeta <- plot_ordination(RELPhOnlyClean10)
+plotbeta <- plot_ordination(RELPhOnlyClean10, ordination, color="Color", shape="Animal") + theme_classic(30)
+#plotbeta <- plot_ordination(RELPhOnlyClean10, ordination, color="Animal", shape="StreamName") + theme_classic(30)
+plotbeta <- plotbeta + geom_point( size = 3)
+plotbeta
+
+
+sampledf <- data.frame(sample_data(RELPhOnlyClean10))
+adonis(wunifrac_dist ~ StreamName+Animal+Color, data = sampledf, permutations = 9999)
+
+##from backup and is working but not sure what is different
+PhOnlyClean10 <- subset_samples(PhMerge, Wash != "dirty")
+PhOnlyClean10 <- subset_samples(PhOnlyClean10, Animal != "Mat")
+
+RELPhOnlyClean10 <- transform_sample_counts(PhOnlyClean10, function(x) x / sum(x))
+
+
+#for only one fphlyum if needed
+RELPhOnlyClean10 <- subset_taxa(RELPhOnlyClean10, Phylum=="Cyanobacteria")
+RELPhOnlyClean10 <-prune_samples(sample_sums(RELPhOnlyClean10)>0, RELPhOnlyClean10)
+Proteobacteria
+Bacteroidota
+Cyanobacteria
+
+wunifrac_dist = phyloseq::distance(RELPhOnlyClean10, method="bray", weighted=F)
+ordination = ordinate(RELPhOnlyClean10, method="PCoA", distance=wunifrac_dist)
+plotbeta <- plot_ordination(RELPhOnlyClean10, ordination, color="Animal", shape="StreamName") + theme_classic(30)
+plotbeta <- plotbeta + geom_point( size = 3)
+plotbeta
+
+sampledf <- data.frame(sample_data(RELPhOnlyClean10))
+adonis(wunifrac_dist ~ StreamName+Animal+Color, data = sampledf, permutations = 9999)
+
+
+#final colors
+allGroupsColors<- c("grey27", "orange", "blue","red")
+allGroupsColors<- c("#FC1520","#0034F7","#187D1B","#BB28BA")
+allGroupsColors<- c("#FC1520","#187D1B","#BB28BA")
+#allGroupsColors <- c("#CED4FB","#EDD4F0","#D5E5D2","#EFCDCD")
+plotbeta + scale_color_manual(values = allGroupsColors)
+
+
+sampledf <- data.frame(sample_data(RELPhOnlyClean10))
+adonis(wunifrac_dist ~ Animal, data = sampledf, permutations = 9999)
+adonis(wunifrac_dist ~ StreamName, data = sampledf, permutations = 9999)
+adonis(wunifrac_dist ~ StreamName+Animal+Color, data = sampledf, permutations = 9999)
+adonis(wunifrac_dist ~ Color+StreamName, data = sampledf, permutations = 9999)
+
+wunifrac_dist = phyloseq::distance(RELPhOnlyClean10, method="bray", weighted=F)
+ordination = ordinate(RELPhOnlyClean10, method="PCoA", distance=wunifrac_dist)
+plotbeta <- plot_ordination(RELPhOnlyClean10, ordination, color="Color", shape="StreamName") + theme_classic(30)
+plotbeta <- plotbeta + geom_point( size = 7)
+plotbeta
+allGroupsColors<- c("black", "orange")
+plotbeta <- plotbeta + scale_color_manual(values = allGroupsColors)
+plotbeta +geom_polygon(aes(fill=Color))
+
+
+################ Relative Abundance Stats Figure 3 ################ 
+
+ForPhil <- read.csv("RelativeAbundancePhylaForPhilPhylaSmallOther.csv")
+ForPhil <- RelativeAbundancePhylaForPhilPhylaSmallOther
+head(ForPhil)
+
+#Remove a phylum
+ForPhil <- ForPhil[!grepl("Bacteroidota", ForPhil$Phylum),]
+ForPhil <- ForPhil[!grepl("Cyanobacteria", ForPhil$Phylum),]
+ForPhil <- ForPhil[!grepl("Other", ForPhil$Phylum),]
+ForPhil <- ForPhil[!grepl("Proteobacteria", ForPhil$Phylum),]
+
+
+s
+
+ForPhil$SpeciesID= as.factor(ForPhil$SpeciesID)
+pm1<- glm(Abundance~SpeciesID,data =ForPhil, family = gaussian)
+summary(pm1)
+rsq(pm1)
+
+ph <- glht(pm1, mcp(SpeciesID = "Tukey"))
+cld(ph)
+
+
+
+################ 16s Genus and phyla Abundance ################ 
+PhOnlyClean10
+ps0 <- PhOnlyClean10
+ps0<- transform_sample_counts(ps0, function(x) x / sum(x))
+ps0 <- tax_glom(ps0, "Genus")
+ps0 <- transform_sample_counts(ps0, function(x) x / sum(x))
+OTU1 = as(otu_table(ps0), "matrix")
+write.csv(OTU1,'genus.csv')
+
+PhOnlyClean10
+ps0 <- PhOnlyClean10
+ps0<- transform_sample_counts(ps0, function(x) x / sum(x))
+ps0 <- tax_glom(ps0, "Phylum")
+ps0 <- transform_sample_counts(ps0, function(x) x / sum(x))
+OTU1 = as(otu_table(ps0), "matrix")
+write.csv(OTU1,'Phylum.csv')
+
+
+
+PhOnlyClean10
+ps0 <- PhOnlyClean10
+ps0<- transform_sample_counts(ps0, function(x) x / sum(x))
+ps0 <- tax_glom(ps0, "Order")
+ps0 <- transform_sample_counts(ps0, function(x) x / sum(x))
+OTU1 = as(otu_table(ps0), "matrix")
+write.csv(OTU1,'order.csv')
+
+#export good phylum
+ps2 <- PhOnlyClean10
+ps2 <- transform_sample_counts(ps2, function(x) x / sum(x))
+ps <- tax_glom(ps2, "Phylum")
+ps0 <- transform_sample_counts(ps, function(x) x / sum(x))
+dat2 <- data.table(psmelt(ps0))
+# convert Phylum to a character vector from a factor because R
+dat2$Phylum <- as.character(dat2$Phylum)
+write.csv(dat2,'Phylum.csv')
+
+
+ps2 <- PhOnlyClean10
+ps2 <- transform_sample_counts(ps2, function(x) x / sum(x))
+ps <- tax_glom(ps2, "Genus")
+ps0 <- transform_sample_counts(ps, function(x) x / sum(x))
+dat2 <- data.table(psmelt(ps0))
+# convert Phylum to a character vector from a factor because R
+dat2$Phylum <- as.character(dat2$Phylum)
+write.csv(dat2,'Genus.csv')
+
+
+################ 16s Faiths PD ################ 
+
+#In Qiime2 make a rooted tree from your representative sequences and export as Newick format 
+qiime alignment mafft --i-sequences representative_sequences.qza --o-alignment aligned-rep-seqs.qza
+qiime alignment mask --i-alignment aligned-rep-seqs.qza --o-masked-alignment masked-aligned-rep-seqs.qza
+qiime phylogeny fasttree --i-alignment masked-aligned-rep-seqs.qza --o-tree unrooted-tree.qza
+qiime phylogeny midpoint-root --i-tree unrooted-tree.qza --o-rooted-tree rooted-tree.qza
+qiime tools export --input-path rooted-tree.qza  --output-path exported-treerooted
+
+Download the "tree.nwk" file to your computer
+
+
+#In R
+library(phyloseq)
+library(picante)
+library(ape)
+install.packages('devtools')
+library(devtools)
+devtools::install_github('twbattaglia/btools')
+library(btools)
+
+setwd("~/Desktop/FinalPipelineNoUnassigned")
+
+filename <- "rootedtree.nwk"
+rootedtree <- ape::read.tree(filename)
+
+#confirm rooted
+is.rooted(rootedtree)
+
+##Import into R
+#otu table
+RawOtu <- read.table("otu.csv",sep=",", row.names=1,header=T, check.names=F,blank.lines.skip = FALSE)
+RawOtu <- RawOtu[,order(colnames(RawOtu))]
+#taxnomy strings
+taxmat <- read.table("tax.csv",sep=",", header=T,  row.names=1, check.names=F,blank.lines.skip = FALSE)
+#mapping file 
+mapping <- read.table("mapingfile.csv",sep=",", header=T,  row.names=1, check.names=F,blank.lines.skip = FALSE)
+
+##Import into phyloseq
+#otu table
+onlyOTU <- as.matrix(RawOtu)
+otu_sub  <- otu_table(onlyOTU, taxa_are_rows = T)
+#taxnomy strings
+t_tax <- as.matrix(taxmat)
+tax_sub = tax_table(t_tax)
+#mapping file
+metadata <- sample_data(mapping)
+
+##Create phyloseq object
+PhUnmodifed<- phyloseq(otu_sub,metadata,tax_sub,rootedtree)
+#Remove negative samples (zeroed out already)
+PhRemoveNeg <- subset_samples(PhUnmodifed, Animal != "Neg")
+#Remove the few nematodes from soil and not mats
+PhRemoveNegSoil <- subset_samples(PhRemoveNeg, Substrate == "mat")
+#Remove non bacteral reads
+PhOnlyBac <- subset_taxa(PhRemoveNegSoil, Domain=="Bacteria")
+
+#filter out low read count samples
+PhNotEud <- subset_samples(PhOnlyBac, Animal != "Eudorylaimus")
+PhNotEud <-prune_samples(sample_sums(PhNotEud)>=100, PhNotEud)
+PhOnlyEud <- subset_samples(PhOnlyBac, Animal == "Eudorylaimus")
+PhOnlyEud <-prune_samples(sample_sums(PhOnlyEud)>=10, PhOnlyEud)
+PhMerge <- merge_phyloseq(PhNotEud,PhOnlyEud)
+
+
+##Only clean nematods and mat
+PhOnlyClean10 <- subset_samples(PhMerge, Wash != "dirty")
+
+
+
+final <- estimate_pd(PhOnlyClean10)
+
+write.csv(final,'FaithsPD.csv')
+
+
+################## Import 18s Data and Filter ASV Table ########
+setwd("~/Desktop/125 dada 18s figure out/Post split/New taxnomy no uncultured")
+
+
+RawOtu <- read.table("otu.csv",sep=",", row.names=1,header=T, check.names=F,blank.lines.skip = FALSE)
+RawOtu <- RawOtu[,order(colnames(RawOtu))]
+#taxnomy strings
+taxmat <- read.table("tax.csv",sep=",", header=T,  row.names=1, check.names=F,blank.lines.skip = FALSE)
+
+#mapping file 
+mapping <- read.table("mapall18withrerun.csv",sep=",", header=T,  row.names=1, check.names=F,blank.lines.skip = FALSE)
+
+##Import into phyloseq
+#otu table
+onlyOTU <- as.matrix(RawOtu)
+otu_sub  <- otu_table(onlyOTU, taxa_are_rows = T)
+#taxnomy strings
+t_tax <- as.matrix(taxmat)
+tax_sub = tax_table(t_tax)
+#mapping file
+metadata <- sample_data(mapping)
+
+##Create phyloseq object
+PhUnmodifed<- phyloseq(otu_sub,metadata,tax_sub)
+#Remove negative samples (zeroed out already)
+PhRemoveNeg <- subset_samples(PhUnmodifed, Animal != "Neg")
+#Remove the few nematodes from soil and not mats
+PhRemoveNegSoil <- subset_samples(PhRemoveNeg, Substrate == "mat")
+PhRemoveNegSoil <- subset_samples(PhRemoveNegSoil, Wash != "dirty")
+
+
+PhRemoveNegSoil
+
+onlyE <- subset_samples(PhRemoveNegSoil, Animal=="Eudorylaimus")
+onlyE <- subset_taxa(onlyE,f!=" __Qudsianematidae")
+onlyP <- subset_samples(PhRemoveNegSoil, Animal=="Plectus")
+onlyP <- subset_taxa(onlyP,f!=" __Plectidae")
+onlyT <- subset_samples(PhRemoveNegSoil, Animal=="Tardigrade")
+onlyT <- subset_taxa(onlyT, d!=" __Tardigrada")
+onlyM <- subset_samples(PhRemoveNegSoil, Animal=="Mat")
+otunohost <- merge_phyloseq(onlyT, onlyP, onlyE,onlyM)
+otunohost <- subset_samples(otunohost, StreamName!="Soil")
+
+################## 18s Alpha Metrics With Hill numbers ################
+setwd("~/Desktop/125 dada 18s figure out/Post split/New taxnomy no uncultured")
+
+
+RawOtu <- read.table("otu.csv",sep=",", row.names=1,header=T, check.names=F,blank.lines.skip = FALSE)
+RawOtu <- RawOtu[,order(colnames(RawOtu))]
+#taxnomy strings
+taxmat <- read.table("tax.csv",sep=",", header=T,  row.names=1, check.names=F,blank.lines.skip = FALSE)
+
+
+#mapping file 
+mapping <- read.table("mapall18withrerun.csv",sep=",", header=T,  row.names=1, check.names=F,blank.lines.skip = FALSE)
+
+
+#Add tree now
+filename <- "18stree.nwk"
+rootedtree <- ape::read.tree(filename)
+#confirm rooted
+is.rooted(rootedtree)
+
+
+##Import into phyloseq
+#otu table
+onlyOTU <- as.matrix(RawOtu)
+otu_sub  <- otu_table(onlyOTU, taxa_are_rows = T)
+#taxnomy strings
+t_tax <- as.matrix(taxmat)
+tax_sub = tax_table(t_tax)
+#mapping file
+metadata <- sample_data(mapping)
+
+##Create phyloseq object, the tree does not work with the !=command
+PhUnmodifed<- phyloseq(otu_sub,metadata,tax_sub,rootedtree)
+
+
+
+#Remove negative samples (zeroed out already)
+PhRemoveNeg <- subset_samples(PhUnmodifed, Animal != "Neg")
+#Remove the few nematodes from soil and not mats
+
+
+PhRemoveNegSoil <- subset_samples(PhRemoveNeg, Substrate == "mat")
+PhRemoveNegSoil <- subset_samples(PhRemoveNegSoil, Wash != "dirty")
+
+PhRemoveNegSoil
+
+onlyE <- subset_samples(PhRemoveNegSoil, Animal=="Eudorylaimus")
+onlyE <- subset_taxa(onlyE,f!=" __Qudsianematidae")
+onlyP <- subset_samples(PhRemoveNegSoil, Animal=="Plectus")
+onlyP <- subset_taxa(onlyP,f!=" __Plectidae")
+onlyT <- subset_samples(PhRemoveNegSoil, Animal=="Tardigrade")
+onlyT <- subset_taxa(onlyT, d!=" __Tardigrada")
+onlyM <- subset_samples(PhRemoveNegSoil, Animal=="Mat")
+otunohost <- merge_phyloseq(onlyT, onlyP, onlyE,onlyM)
+
+
+
+
+#This is your modified phyloseq object
+#Export the out table
+dat3= as(otu_table(otunohost), "matrix")
+#Transform and make into a dataframe
+dat3t2 <- as.data.frame(t(dat3))
+head(dat3t2)
+
+#Make dataframe to put your results into
+otu_BF_div <- dat3t2[1:1]
+
+#Calcualte hill numbers
+otu_BF_div$rich <- hill_taxa(dat3t2, q=0)                                                                                               
+otu_BF_div$shan <- hill_taxa(dat3t2, q=1)                                                                                               
+otu_BF_div$simp <- hill_taxa(dat3t2, q=2)
+
+#Remove that first collum of junk
+otu_BF_div[1] <- NULL
+
+#your final results
+otu_BF_div
+
+write.csv(otu_BF_div,'HillNumbers18sMat.csv')
+
+otu_BF_div
+
+otu_BF_div <- dat3t2[1:1]
+
+
+tree1 = phy_tree(PhOnlyClean10)
+otu_BF_div$faith <- hill_phylo(dat3t2,tree1, q=0)          
+
+write.csv(otu_BF_div,'HillNumbers18sMatFaith.csv')
+
+
+
+
+
+
+###################Alpha Supp###########
+
+AlphaForPhilNoUncultWithMetadata <- read.csv("~/Desktop/FinalPipelineNoUnassigned/HillNumbers.csv")
+alphadata <- AlphaForPhilNoUncultWithMetadata
+
+
+#AlphaForPhilNoUncultWithMetadata <- read.csv("FaithsPD.csv")
+#alphadata <- AlphaForPhilNoUncultWithMetadata
+alphadata$SpeciesIDMatType <- factor(alphadata$SpeciesIDMatType,levels = c( "MatBlack", "MatOrange", "TardigradeBlack","TardigradeOrange",
+                                                                            "PlectusBlack", "PlectusOrange", "EudorylaimusBlack", "EudorylaimusOrange"))
+p <- ggplot(alphadata, aes(x=SpeciesIDMatType, y=PD, fill=MatType)) +  geom_boxplot(outlier.shape = NA,coef = 0.3)
+p <- p +theme_classic(15,) + ylab("Faith's Phylogenetic Diversity (Hill Numbers)") 
+p <- p+ geom_signif(comparisons = list(c("MatBlack", "MatOrange")), annotation="a", tip_length = 0,  y_position = c(35)) + geom_signif(comparisons = list(c("TardigradeBlack", "TardigradeOrange")), annotation="b", tip_length = 0, y_position = c(15)) + geom_signif(comparisons = list(c("PlectusBlack",  "EudorylaimusOrange")), annotation="c", tip_length = 0, y_position = c(8))
+p <- p + theme(axis.title.x=element_blank(), axis.text.x = element_text(color="black"), axis.text.y = element_text(color="black") )
+p <- p + scale_fill_manual(values=c("gray50", "#ff7800")) +scale_x_discrete(labels = c('Black Mat','Orange Mat', 'Tardigrade','Tardigrade','Plectus', 'Plectus','Eudorylaimus', 'Eudorylaimus'))  + theme(legend.position = "none") +scale_y_continuous(limits = c(0,40), expand = c(0,0))
+p
+myPalette <- c ( "black", "#ff7800", "black", "#ff7800","black", "#ff7800","black", "#ff7800")
+p <- p + theme(axis.text.x = element_text(colour=myPalette))
+Faiths <- p + theme(axis.text.x = element_text(angle = 25, hjust=1))
+Faiths +   geom_signif(comparisons = list(c("MatBlack", "MatOrange")))
+Faiths
+
+
+
+#estimate_richness(PhOnlyClean10)
+#test <- estimate_richness(PhOnlyClean10,measures=c("Simpson","InvSimpson"))
+
+
+#alphadata <- read.csv("Simpsons.csv")
+alphadata$SpeciesIDMatType <- factor(alphadata$SpeciesIDMatType,levels = c( "MatBlack", "MatOrange", "TardigradeBlack","TardigradeOrange",
+                                                                            "PlectusBlack", "PlectusOrange", "EudorylaimusBlack", "EudorylaimusOrange"))
+head(alphadata)
+p <- ggplot(alphadata, aes(x=SpeciesIDMatType, y=Simpson,fill=MatType)) +  geom_boxplot(outlier.shape = NA,coef = 0.3)
+p <- p +theme_classic(15) + ylab("Simpson Diversity Index (Hill's Numbers)") 
+p <- p+ geom_signif(comparisons = list(c("MatBlack", "MatOrange")), annotation="a", tip_length = 0,  y_position = c(40)) + geom_signif(comparisons = list(c("TardigradeBlack", "EudorylaimusOrange")), annotation="b", tip_length = 0, y_position = c(30)) 
+p <- p + theme(axis.title.x=element_blank(), axis.text.x = element_text(color="black"), axis.text.y = element_text(color="black") )
+p <- p + scale_fill_manual(values=c("gray50", "#ff7800")) +scale_x_discrete(labels = c('Black Mat','Orange Mat', 'Tardigrade','Tardigrade','Plectus', 'Plectus','Eudorylaimus', 'Eudorylaimus'))  + theme(legend.position = c(.9,.9)) + scale_y_continuous(limits = c(0,50), expand = c(0, 0)) + labs(fill='Mat Type') 
+p
+myPalette <- c ( "black", "#ff7800", "black", "#ff7800","black", "#ff7800","black", "#ff7800")
+p <- p + theme(axis.text.x = element_text(colour=myPalette))
+Simpson <- p + theme(axis.text.x = element_text(angle = 25, hjust=1))
+Simpson
+
+
+Figuresup <- ggarrange(Faiths, Simpson,  labels = c("a.",  "b."), ncol = 2, nrow = 1)
+Figuresup
+
+###############Hill Numbers##############
+library(phyloseq)
+library(agricolae)
+library(tidyverse)
+library(lme4)
+library(lmerTest)
+library(glmmTMB)
+library(emmeans)
+library(car)
+library(MuMIn)
+library(agridat)
+library(DHARMa)
+library(viridis)
+library(hillR)
+library(GGally)
+library(lavaan)
+
+
+#This is your modified phyloseq object
+PhOnlyClean10
+
+#Export the out table
+dat3= as(otu_table(PhOnlyClean10), "matrix")
+#Transform and make into a dataframe
+dat3t2 <- as.data.frame(t(dat3))
+head(dat3t2)
+
+#Make dataframe to put your results into
+otu_BF_div <- dat3t2[1:1]
+
+#Calcualte hill numbers
+otu_BF_div$rich <- hill_taxa(dat3t2, q=0)                                                                                               
+otu_BF_div$shan <- hill_taxa(dat3t2, q=1)                                                                                               
+otu_BF_div$simp <- hill_taxa(dat3t2, q=2)
+
+#Remove that first collum of junk
+otu_BF_div[1] <- NULL
+
+#your final results
+otu_BF_div
+
+write.csv(otu_BF_div,'HillNumbers2.csv')
+
+otu_BF_div
+
+otu_BF_div <- dat3t2[1:1]
+
+
+tree1 = phy_tree(PhOnlyClean10)
+otu_BF_div$faith <- hill_phylo(dat3t2,tree1, q=0)          
+
+write.csv(otu_BF_div,'HillNumbers2.csv')
+
+
+
+################## Relative bar by streams###############
+
+ph4<- PhOnlyClean10
+ph4 <-prune_samples(sample_sums(ph4)>=1, ph4)
+ps4<- transform_sample_counts(ph4, function(x) x / sum(x))
+ps <- tax_glom(ps4, "Phylum")
+ps0 <- transform_sample_counts(ps, function(x) x / sum(x))
+ps1 <- merge_samples(ps0, "typecolorstream")
+#account for uneven numbersZ
+ps2 <- transform_sample_counts(ps1, function(x) x / sum(x))
+dat2 <- data.table(psmelt(ps2))
+# convert Phylum to a character vector from a factor because R
+dat2$Phylum <- as.character(dat2$Phylum)
+# group dataframe by Phylum, calculate median rel. abundance
+dat2[, median := median(Abundance, na.rm = TRUE), 
+     by = "Phylum"]
+# Change name to remainder of Phylum less than 1%
+dat2[(median <= 0.0035), Phylum := "Other Phyla "]
+dat2$Sample <- factor(dat2$Sample, levels = c(
+  "Mat_Black_CanadaStream",
+  "Mat_Black_BowlesCreek",
+  "Mat_Black_DeltaStream",
+  "Mat_Black_VG",
+  "Mat_Orange_CanadaStream", 
+  "Mat_Orange_BowlesCreek",
+  "Mat_Orange_DeltaStream",
+  "Mat_Orange_VG" ,
+  
+  "Tardigrade_Black_CanadaStream",
+  "Tardigrade_Black_BowlesCreek",
+  "Tardigrade_Black_DeltaStream",
+  "Tardigrade_Black_VG", 
+  "Tardigrade_Orange_CanadaStream",
+  "Tardigrade_Orange_BowlesCreek",
+  "Tardigrade_Orange_DeltaStream",
+  "Tardigrade_Orange_VG",
+  
+  "Plectus_Black_CanadaStream",
+  "Plectus_Black_BowlesCreek",
+  "Plectus_Black_DeltaStream",
+  "Plectus_Black_VG", 
+  "Plectus_Orange_CanadaStream",
+  "Plectus_Orange_BowlesCreek",
+  "Plectus_Orange_DeltaStream",
+  "Plectus_Orange_VG",
+  
+  "Eudorylaimus_Black_CanadaStream",
+  "Eudorylaimus_Black_BowlesCreek",
+  "Eudorylaimus_Black_DeltaStream",
+  "Eudorylaimus_Black_VG", 
+  "Eudorylaimus_Orange_CanadaStream",
+  "Eudorylaimus_Orange_BowlesCreek",
+  "Eudorylaimus_Orange_DeltaStream",
+  "Eudorylaimus_Orange_VG" 
+  
+  
+))
+palette <- c( "#CCAC60", "#5FE2D2", "#CFE47E", "#7C8BA6" ,"#ACAC9A" ,"#B6E7D9", "#774C64", "#ACA0DC", "#73E754" ,"#E44F9C", "#E67A4C",  "#69E79B", "#73C8DC", "#E1A3DB", "#5DA3E9",
+              "#E7E2B0", "#885CD9", "#DA84DF", "#ACE4AA", "#DCDFE2", "#DCC1DC", "#E2AB92", "#8B38EA", "#D53D58", "#76A562", "#DDEE44", "#7874D1" ,"#DC47DA")
+edes2 <- ggplot(dat2, aes(x = Sample, y = Abundance, fill = fct_reorder(Phylum, Abundance, sum))) + geom_bar( stat = "identity")  + theme_classic(22) + scale_fill_manual(values=palette) 
+edes2 + theme(axis.title.x=element_blank(),axis.text.x = element_text(color="black", margin = margin(t = 2)),axis.text.y = element_text(color="black")  )  + ylab("Relative Abundance") + labs(fill='Bacteria Phyla') +  scale_y_continuous(expand = c(0,0)) 
+edes2 <- edes2 + theme(legend.text = element_text(size=10), axis.text.x = element_text(angle = 45, hjust = 1)) 
+
+
+myPalette <- c ( "black", "black","black","black","#ff7800", "#ff7800","#ff7800","#ff7800","black", "black","black","black","#ff7800", "#ff7800","#ff7800","#ff7800","black", "black","black","black","#ff7800", "#ff7800","#ff7800","#ff7800","black", "black","black","black","#ff7800", "#ff7800","#ff7800","#ff7800")
+edes2 <- edes2 + theme(axis.text.x = element_text(colour=myPalette))
+edes2
+
+
+allphyla <-  edes2 + theme(legend.position="bottom", axis.title.x=element_blank(),axis.text.x = element_text(color="black", margin = margin(t = 2)),axis.text.y = element_text(color="black")  )  + ylab("Relative Abundance") + labs(fill='Bacteria Phyla') +  scale_y_continuous(expand = c(0,0)) +scale_x_discrete( labels = c('Black Mat','Orange Mat','Tardigrade','Tardigrade','Plectus','Plectus','Eudorylaimus','Eudorylaimus'))
+
+allphyla <- allphyla + guides(fill = guide_legend(reverse = TRUE))
+
+
+##############18s comparing runs###############3
+##Set working directory 
+setwd("~/Desktop/18s all with rerun")
+
+
+##Import into R
+#otu table
+RawOtu <- read.table("otutonlyoverlap.csv",sep=",", row.names=1,header=T, check.names=F,blank.lines.skip = FALSE)
+RawOtu <- RawOtu[,order(colnames(RawOtu))]
+#taxnomy strings
+taxmat <- read.table("tax.csv",sep=",", header=T,  row.names=1, check.names=F,blank.lines.skip = FALSE)
+#mapping file 
+mapping <- read.table("mapall18withrerun.csv",sep=",", header=T,  row.names=1, check.names=F,blank.lines.skip = FALSE)
+
+##Import into phyloseq
+#otu table
+onlyOTU <- as.matrix(RawOtu)
+otu_sub  <- otu_table(onlyOTU, taxa_are_rows = T)
+#taxnomy strings
+t_tax <- as.matrix(taxmat)
+tax_sub = tax_table(t_tax)
+#mapping file
+metadata <- sample_data(mapping)
+
+##Create phyloseq object
+PhUnmodifed<- phyloseq(otu_sub,metadata,tax_sub)
+#Remove negative samples (zeroed out already)
+PhRemoveNeg <- subset_samples(PhUnmodifed, Animal != "Neg")
+#Remove the few nematodes from soil and not mats
+PhRemoveNegSoil <- subset_samples(PhRemoveNeg, Substrate == "mat")
+#Remove non euk reads
+PhRemoveNegSoil <- subset_taxa(PhRemoveNegSoil, a=="Eukaryota")
+PhRemoveNegSoil <-prune_samples(sample_sums(PhRemoveNegSoil)>=100, PhRemoveNegSoil)
+
+PhRemoveNegSoil <- subset_samples(PhRemoveNegSoil, Run != "na")
+plot_richness(PhRemoveNegSoil,x="Run", measures=c("Observed", "Shannon"))
+
+eee <- estimate_richness(PhRemoveNegSoil,measures=c("Observed", "Shannon"))
+
+write.csv(eee,'18sealpah2.csv')
+
+PhRemoveNegSoil <- subset_samples(PhRemoveNegSoil, Compare == "overlap")
+
+PhRemoveNegSoil <- transform_sample_counts(PhRemoveNegSoil, function(x) x / sum(x))
+wunifrac_dist = phyloseq::distance(PhRemoveNegSoil, method="bray", weighted=F)
+ordination = ordinate(PhRemoveNegSoil, method="PCoA", distance=wunifrac_dist)
+plotbeta <- plot_ordination(PhRemoveNegSoil, ordination, color="Animal",shape="Run") + theme_classic(30)
+plotbeta <- plotbeta + geom_point( size = 3)
+plotbeta
+
+PhRemoveNegSoilonlyfirst <- subset_samples(PhRemoveNegSoil, Run == "first")
+PhRemoveNegSoilonlysecond <- subset_samples(PhRemoveNegSoil, Run == "second")
+
+rarecurve(t(otu_table(PhRemoveNegSoilonlyfirst)), step=150, cex=0.5)
+rarecurve(t(otu_table(PhRemoveNegSoilonlysecond)), step=150, cex=0.5)
+
+
+
+sampledf <- data.frame(sample_data(PhRemoveNegSoil))
+adonis(wunifrac_dist ~ Run, data = sampledf, permutations = 9999)
+
+PhOnlyEuk <- subset_taxa(PhRemoveNegSoil, a=="Eukaryota")
+ph4<- PhOnlyEuk
+ph4 <-prune_samples(sample_sums(ph4)>1, ph4)
+ps4<- transform_sample_counts(ph4, function(x) x / sum(x))
+ps <- tax_glom(ps4, "d")
+ps0 <- transform_sample_counts(ps, function(x) x / sum(x))
+ps1 <- merge_samples(ps0, "Run")
+#account for uneven numbersZ
+ps2 <- transform_sample_counts(ps1, function(x) x / sum(x))
+dat2 <- data.table(psmelt(ps2))
+# convert Phylum to a character vector from a factor because R
+dat2$d <- as.character(dat2$d)
+# group dataframe by Phylum, calculate median rel. abundance
+dat2[, median := median(Abundance, na.rm = TRUE), 
+     by = "d"]
+# Change name to remainder of Phylum less than 1%
+dat2[(median <= 0.00035), d := "Other Phyla "]
+dat2$Run <- factor(dat2$Sample, levels = c(
+  "first",
+  "second"
+))
+
+
+palette <- c( "#54555a", "#E7C144", "#D68092", "#CFE47E", "#7C8BA6" ,"#ACAC9A" ,"#B6E7D9", "#774C64", "#e79f55", "#4496e1", "#E44F9C", "#73E754" ,"#69E79B", "#73C8DC", "#E1A3DB", "#5DA3E9",
+              "#E7E2B0", "#885CD9", "#DA84DF", "#ACE4AA", "#DCDFE2", "#DCC1DC", "#E2AB92", "#8B38EA", "#D53D58", "#76A562", "#DDEE44", "#7874D1" ,"#DC47DA") #oldproeti E67A4C
+edes2 <- ggplot(dat2, aes(x = Sample, y = Abundance, fill = d)) + geom_bar( stat = "identity")  + theme_classic(15) + scale_fill_manual(values=palette) ##was classic 22
+edes2
+
+
+allphyla <-  edes2 + theme(legend.position="bottom", axis.title.x=element_blank(),axis.text.x = element_text(color="black", margin = margin(t = 2)),axis.text.y = element_text(color="black")  )  + ylab("Relative Abundance") + labs(fill='Bacteria Phyla') +  scale_y_continuous(expand = c(0,0)) +scale_x_discrete( labels = c('Black Mat','Orange Mat','Tardigrade','Tardigrade','Plectus','Plectus','Eudorylaimus','Eudorylaimus'))
+myPalette <- c ( "black", "#ff7800", "black", "#ff7800","black", "#ff7800","black", "#ff7800")
+allphyla <- allphyla + theme(axis.text.x = element_text(colour=myPalette))
+allphyla <- allphyla + theme(legend.text = element_text(size=10), legend.title = element_text(size=15), axis.text.x = element_text(angle = 25, hjust = 1)) 
+allphyla <- allphyla + guides(fill = guide_legend(reverse = TRUE))
+allphyla
+
+
+
+
+##################tardigrade by halpotype##################
+
+
+PhOnlyClean10
+
+ph4<- PhOnlyClean10
+ph4 <- subset_samples(ph4, Thapylo != "null")
+ph4 <-prune_samples(sample_sums(ph4)>=1, ph4)
+ps4<- transform_sample_counts(ph4, function(x) x / sum(x))
+ps <- tax_glom(ps4, "Phylum")
+ps0 <- transform_sample_counts(ps, function(x) x / sum(x))
+ps1 <- merge_samples(ps0, "Thapylo")
+#account for uneven numbersZ
+ps2 <- transform_sample_counts(ps1, function(x) x / sum(x))
+dat2 <- data.table(psmelt(ps2))
+# convert Phylum to a character vector from a factor because R
+dat2$Phylum <- as.character(dat2$Phylum)
+# group dataframe by Phylum, calculate median rel. abundance
+dat2[, median := median(Abundance, na.rm = TRUE), 
+     by = "Phylum"]
+# Change name to remainder of Phylum less than 1%
+dat2[(median <= 0.0035), Phylum := "Other Phyla "]
+#dat2$Sample <- factor(dat2$Sample, levels = c(
+  "Mat_Black",
+  "Mat_Orange",
+  "Tardigrade_Black",
+  "Tardigrade_Orange",
+  "Plectus_Black",
+  "Plectus_Orange",
+  "Eudorylaimus_Black",
+  "Eudorylaimus_Orange"
+))
+palette <- c( "#E7C144", "#D68092", "#CFE47E", "#7C8BA6" ,"#ACAC9A" ,"#B6E7D9", "#774C64", "#ACA0DC", "#73E754" ,"#4496e1", "#E44F9C", "#69E79B", "#73C8DC", "#E1A3DB", "#5DA3E9",
+              "#E7E2B0", "#885CD9", "#DA84DF", "#ACE4AA", "#DCDFE2", "#DCC1DC", "#E2AB92", "#8B38EA", "#D53D58", "#76A562", "#DDEE44", "#7874D1" ,"#DC47DA") #oldproeti E67A4C
+edes2 <- ggplot(dat2, aes(x = Sample, y = Abundance, fill = fct_reorder(Phylum, Abundance, sum))) + geom_bar( stat = "identity")  + theme_classic(15) + scale_fill_manual(values=palette) ##was classic 22
+allphyla <-  edes2 + theme(legend.position="bottom", axis.title.x=element_blank(),axis.text.x = element_text(color="black", margin = margin(t = 2)),axis.text.y = element_text(color="black")  )  + ylab("Relative Abundance") + labs(fill='Bacteria Phyla') +  scale_y_continuous(expand = c(0,0))
+myPalette <- c ( "black", "#ff7800", "black", "#ff7800","black", "#ff7800","black", "#ff7800")
+allphyla <- allphyla + theme(legend.text = element_text(size=10), legend.title = element_text(size=15), axis.text.x = element_text(angle = 25, hjust = 1)) 
+allphyla
+
+
+
+#graph per animal, genus now, only cyanos
+ph4<- PhOnlyClean10
+ph4 <- subset_samples(ph4, Thapylo != "null")
+ph4 <-prune_samples(sample_sums(ph4)>=1, ph4)
+ps4<- transform_sample_counts(ph4, function(x) x / sum(x))
+ps <- tax_glom(ps4, "Genus")
+ps0 <- transform_sample_counts(ps, function(x) x / sum(x))
+ps1 <- merge_samples(ps0, "Thapylo")
+#account for uneven numbersZ
+ps2 <- transform_sample_counts(ps1, function(x) x / sum(x))
+ps2 <- subset_taxa(ps2, Phylum=="Cyanobacteria")
+dat2 <- data.table(psmelt(ps2))
+# convert Phylum to a character vector from a factor because R
+dat2$Genus <- as.character(dat2$Genus)
+# group dataframe by Phylum, calculate median rel. abundance
+dat2[, median := median(Abundance, na.rm = TRUE), 
+     by = "Genus"]
+# Change name to remainder of Phylum less than 1%
+dat2[(median <= 0.0000000000000000000000000000099), Genus := "Other Genera "]
+#dat2$Sample <- factor(dat2$Sample, levels = c(
+  "Mat_Black",
+  "Mat_Orange",
+  "Tardigrade_Black",
+  "Tardigrade_Orange",
+  "Plectus_Black",
+  "Plectus_Orange",
+  "Eudorylaimus_Black",
+  "Eudorylaimus_Orange"
+))
+palette <- c("#BFB6D5" ,"#D34E86", "#E08D4E", "#DEE24C", "#84E1A7" , "#CD9493" ,"#D1CF8C", "#FFC446","774C64","#76E25D","#236519")
+# at frontD94ADC
+edes2 <- ggplot(dat2, aes(x = Sample, y = Abundance, fill = fct_reorder(Genus, Abundance, sum))) + geom_bar( stat = "identity")  + theme_classic(15) + scale_fill_manual(values=palette) 
+edes2 <- edes2+ geom_signif(comparisons = list(c("Mat_Black", "Mat_Orange")), annotation="a", y_position = c(0.48) ) + geom_signif(comparisons = list(c("Tardigrade_Black", "Eudorylaimus_Orange")), annotation="b", y_position = c(0.3))
+onlycyano <- edes2 + theme(axis.title.x=element_blank(),axis.text.x = element_text(color="black", margin = margin(t = 2)),axis.text.y = element_text(color="black"),legend.text = element_text(face = "italic")  )  + ylab("Relative Abundance") + labs(fill='Cyanobacteria Genera') +  scale_y_continuous(limits = c(0, 0.57), expand = c(0,0)) 
+myPalette <- c ( "black", "#ff7800", "black", "#ff7800","black", "#ff7800","black", "#ff7800")
+#onlycyano <- onlycyano + theme(axis.text.x = element_text(colour=myPalette))
+onlycyano <- onlycyano + theme(legend.text = element_text(size=10), legend.title = element_text(size=15), axis.text.x = element_text(angle = 25, hjust = 1))  + guides(fill=guide_legend(ncol=2))
+onlycyano <- onlycyano + ylab(expression(atop("Relative Abundance", paste("By Cyanobacteria Genus"))))
+onlycyanoNoL <- onlycyano + theme(legend.position = "none") 
+my_legend <- get_legend(onlycyano)
+CyanoLeg<- as_ggplot(my_legend)
+onlycyano
+
+palette <- distinctColorPalette(30)
+
+#graph per animal, genus now, only bacteria
+ph4<- PhOnlyClean10
+ph4 <- subset_samples(ph4, Thapylo != "null")
+ph4 <-prune_samples(sample_sums(ph4)>=1, ph4)
+ps4<- transform_sample_counts(ph4, function(x) x / sum(x))
+ps <- tax_glom(ps4, "Genus")
+ps0 <- transform_sample_counts(ps, function(x) x / sum(x))
+ps1 <- merge_samples(ps0, "Thapylo")
+#account for uneven numbersZ
+ps2 <- transform_sample_counts(ps1, function(x) x / sum(x))
+ps2 <- subset_taxa(ps2, Phylum=="Bacteroidota")
+dat2 <- data.table(psmelt(ps2))
+# convert Phylum to a character vector from a factor because R
+dat2$Genus <- as.character(dat2$Genus)
+# group dataframe by Phylum, calculate median rel. abundance
+dat2[, median := median(Abundance, na.rm = TRUE), 
+     by = "Genus"]
+# Change name to remainder of Phylum less than 1%
+dat2[(median <= 0.00029), Genus := "Other Genera "] #0.000199
+#dat2$Sample <- factor(dat2$Sample, levels = c(
+  "Mat_Black",
+  "Mat_Orange",
+  "Tardigrade_Black",
+  "Tardigrade_Orange",
+  "Plectus_Black",
+  "Plectus_Orange",
+  "Eudorylaimus_Black",
+  "Eudorylaimus_Orange"
+))
+palette <- c( "#817780", "#E4704C", "#DBB247","#6CE3E1", "#E3E0AE", "#DBAD81", "#648EE7" , "#7AA56F", "#E4ACDE", "#DC4ADB", "#76EA9A", "#5AE5BF", "#7B376E", "#82D25E", "#DDC3BE", "#E44C90", "#61A6DA",
+              "#8867DD", "#D2E588", "#6DEF4C", "#9F8ED2", "#D6818F", "#DC85DB", "#C2BEDF", "#843BE2", "#CDE4E4", "#ACE4C1", "#70C3D7", "#DEEA44")
+on front
+edes2 <- ggplot(dat2, aes(x = Sample, y = Abundance, fill = fct_reorder(Genus, Abundance, sum))) + geom_bar( stat = "identity")  + theme_classic(15) + scale_fill_manual(values=palette) 
+edes2 <- edes2+ geom_signif(comparisons = list(c("Mat_Black", "Mat_Orange")), annotation="b", y_position = c(0.3) ) + geom_signif(comparisons = list(c("Tardigrade_Black", "Plectus_Orange")), annotation="a", y_position = c(0.6))+ geom_signif(comparisons = list(c("Eudorylaimus_Black", "Eudorylaimus_Orange")), annotation="b", y_position = c(0.3) ) 
+onlybac <- edes2 + theme(axis.title.x=element_blank(),axis.text.x = element_text(color="black", margin = margin(t = 2)),axis.text.y = element_text(color="black"),legend.text = element_text(face = "italic")  )  + ylab("Relative Abundance") + labs(fill='Bacteroidota Genera') +  scale_y_continuous(limits = c(0, 0.65), expand = c(0,0)) 
+myPalette <- c ( "black", "#ff7800", "black", "#ff7800","black", "#ff7800","black", "#ff7800")
+#onlybac <- onlybac + theme(axis.text.x = element_text(colour=myPalette))
+onlybac <- onlybac + theme(legend.text = element_text(size=10), legend.title = element_text(size=15), axis.text.x = element_text(angle = 25, hjust = 1)) + guides(fill=guide_legend(ncol=2))
+onlybac
+onlybac <- onlybac + ylab(expression(atop("Relative Abundance", paste("By Bacteroidota Genus"))))
+onlybacNoL <- onlybac + theme(legend.position = "none") 
+my_legend <- get_legend(onlybac)
+BacLeg<- as_ggplot(my_legend)
+
+
+#graph per animal, genus now, only protoeio
+ph4<- PhOnlyClean10
+ph4 <- subset_samples(ph4, Thapylo != "null")
+ph4 <-prune_samples(sample_sums(ph4)>=1, ph4)
+ps4<- transform_sample_counts(ph4, function(x) x / sum(x))
+ps <- tax_glom(ps4, "Family")
+ps0 <- transform_sample_counts(ps, function(x) x / sum(x))
+ps1 <- merge_samples(ps0, "Thapylo")
+#account for uneven numbersZ
+ps2 <- transform_sample_counts(ps1, function(x) x / sum(x))
+ps2 <- subset_taxa(ps2, Phylum=="Proteobacteria")
+dat2 <- data.table(psmelt(ps2))
+# convert Phylum to a character vector from a factor because R
+dat2$Family <- as.character(dat2$Family)
+# group dataframe by Phylum, calculate median rel. abundance
+dat2[, median := median(Abundance, na.rm = TRUE), 
+     by = "Family"]
+# Change name to remainder of Phylum less than 1%
+dat2[(median <= 0.0010), Family := "Other Familes "] #0.0008
+#dat2$Sample <- factor(dat2$Sample, levels = c(
+  "Mat_Black",
+  "Mat_Orange",
+  "Tardigrade_Black",
+  "Tardigrade_Orange",
+  "Plectus_Black",
+  "Plectus_Orange",
+  "Eudorylaimus_Black",
+  "Eudorylaimus_Orange"
+))
+palette <- c( "#E7CFD3", "#E5E4BB", "#68EAA0", "#60B79B","#DD87DD", "#ABAB9A" ,"#8AA662", "#DC4ADB", "#833AE2", "#DCAE41" ,"#D5E77D", "#7A4282" ,"#E6704B", "#DAAADC", "#BCE7DE" ,"#7E717D", "#DCA383",
+              "#E44B91", "#66EDDA" ,"#6DEF4C", "#64A5DA", "#8690DF", "#B7C5E0", "#D67D8F", "#B1E9AC", "#80D360", "#8968E1", "#DECA7E", "#DEEB40", "#69D3E4")
+edes2 <- ggplot(dat2, aes(x = Sample, y = Abundance, fill = fct_reorder(Family, Abundance, sum))) + geom_bar( stat = "identity")  + theme_classic(15) + scale_fill_manual(values=palette) 
+edes2 <- edes2+ geom_signif(comparisons = list(c("Mat_Black", "Plectus_Orange")), annotation="b", y_position = c(0.4) ) + geom_signif(comparisons = list(c("Eudorylaimus_Black", "Eudorylaimus_Orange")), annotation="a", y_position = c(0.69))
+onlypro <- edes2 + theme(axis.title.x=element_blank(),axis.text.x = element_text(color="black", margin = margin(t = 2)),axis.text.y = element_text(color="black")  )  + ylab("Relative Abundance") + labs(fill='Proteobacteria Families') +  scale_y_continuous(limits = c(0, 0.75), expand = c(0,0)) 
+myPalette <- c ( "black", "#ff7800", "black", "#ff7800","black", "#ff7800","black", "#ff7800")
+#onlypro <- onlypro + theme(axis.text.x = element_text(colour=myPalette))
+onlypro <- onlypro + theme(legend.text = element_text(size=10), legend.title = element_text(size=15), axis.text.x = element_text(angle = 25, hjust = 1)) +guides(fill=guide_legend(ncol=2))
+onlypro
+onlypro <- onlypro + ylab(expression(atop("Relative Abundance", paste("By Proteobacteria Family"))))
+
+onlyproNoL <- onlypro + theme(legend.position = "none") 
+my_legend <- get_legend(onlypro)
+ProLeg<- as_ggplot(my_legend)              
+
+#palette
+
+
+#palette <- distinctColorPalette(30)
+0.0009
+
+#make into one big graph, good version
+rightright <- ggarrange(CyanoLeg, BacLeg, ProLeg,  ncol = 1, nrow = 3)
+right <- ggarrange(onlycyanoNoL, onlybacNoL, onlyproNoL,   labels = c("b.", "c.", "d."),  ncol = 1, nrow = 3)
+ggarrange(allphyla, right,rightright,  labels = c("a.",  "", ""), ncol = 3, nrow = 1, widths = c(1.5, 1, 0.7))
+
+
+##all 6 now
+
+
+
+ph4<- PhOnlyClean10
+ph4 <-prune_samples(sample_sums(ph4)>=1, ph4)
+ps4<- transform_sample_counts(ph4, function(x) x / sum(x))
+ps <- tax_glom(ps4, "Phylum")
+ps0 <- transform_sample_counts(ps, function(x) x / sum(x))
+ps1 <- merge_samples(ps0, "AnimalColorHapylo")
+#account for uneven numbersZ
+ps2 <- transform_sample_counts(ps1, function(x) x / sum(x))
+dat2 <- data.table(psmelt(ps2))
+# convert Phylum to a character vector from a factor because R
+dat2$Phylum <- as.character(dat2$Phylum)
+# group dataframe by Phylum, calculate median rel. abundance
+dat2[, median := median(Abundance, na.rm = TRUE), 
+     by = "Phylum"]
+# Change name to remainder of Phylum less than 1%
+dat2[(median <= 0.0035), Phylum := "Other Phyla "]
+dat2$Sample <- factor(dat2$Sample, levels = c(
+"MatnullBlack",
+"MatnullOrange",
+"TardigradeMBlack",
+"TardigradeMOrange",
+"TardigradePBlack",
+"TardigradePOrange",
+"TardigradeRBlack",
+"TardigradeROrange",
+"PlectusnullBlack",
+"PlectusnullOrange",
+"EudorylaimusnullBlack",
+"EudorylaimusnullOrange"
+))
+
+
+palette <- c( "#E7C144", "#D68092", "#CFE47E", "#7C8BA6" ,"#ACAC9A" ,"#B6E7D9", "#774C64", "#ACA0DC", "#73E754" ,"#4496e1", "#E44F9C", "#69E79B", "#73C8DC", "#E1A3DB", "#5DA3E9",
+              "#E7E2B0", "#885CD9", "#DA84DF", "#ACE4AA", "#DCDFE2", "#DCC1DC", "#E2AB92", "#8B38EA", "#D53D58", "#76A562", "#DDEE44", "#7874D1" ,"#DC47DA") #oldproeti E67A4C
+edes2 <- ggplot(dat2, aes(x = Sample, y = Abundance, fill = fct_reorder(Phylum, Abundance, sum))) + geom_bar( stat = "identity")  + theme_classic(15) + scale_fill_manual(values=palette) ##was classic 22
+allphyla <-  edes2 + theme(legend.position="bottom", axis.title.x=element_blank(),axis.text.x = element_text(color="black", margin = margin(t = 2)),axis.text.y = element_text(color="black")  )  + ylab("Relative Abundance") + labs(fill='Bacteria Phyla') +  scale_y_continuous(expand = c(0,0))
+myPalette <- c ( "black", "#ff7800", "black", "#ff7800","black", "#ff7800","black", "#ff7800")
+allphyla <- allphyla + theme(legend.text = element_text(size=10), legend.title = element_text(size=15), axis.text.x = element_text(angle = 25, hjust = 1)) 
+allphyla <-  allphyla +scale_x_discrete(labels = c('Black Mat','Orange Mat','Black M Tardigrade','Orange M Tardigrade','Black P Tardigrade','Black R Tardigrade','Orange R Tardigrade','Black Plectus','Orange Plectus','Black Eudorylaimus','Orange Eudorylaimus'))
+
+
+#graph per animal, genus now, only cyanos
+ph4<- PhOnlyClean10
+ph4 <-prune_samples(sample_sums(ph4)>=1, ph4)
+ps4<- transform_sample_counts(ph4, function(x) x / sum(x))
+ps <- tax_glom(ps4, "Genus")
+ps0 <- transform_sample_counts(ps, function(x) x / sum(x))
+ps1 <- merge_samples(ps0, "AnimalColorHapylo")
+#account for uneven numbersZ
+ps2 <- transform_sample_counts(ps1, function(x) x / sum(x))
+ps2 <- subset_taxa(ps2, Phylum=="Cyanobacteria")
+dat2 <- data.table(psmelt(ps2))
+# convert Phylum to a character vector from a factor because R
+dat2$Genus <- as.character(dat2$Genus)
+# group dataframe by Phylum, calculate median rel. abundance
+dat2[, median := median(Abundance, na.rm = TRUE), 
+     by = "Genus"]
+# Change name to remainder of Phylum less than 1%
+dat2[(median <= 0.0000000000000000000000000000099), Genus := "Other Genera "]
+dat2$Sample <- factor(dat2$Sample, levels = c(
+  "MatnullBlack",
+  "MatnullOrange",
+  "TardigradeMBlack",
+  "TardigradeMOrange",
+  "TardigradePBlack",
+  "TardigradePOrange",
+  "TardigradeRBlack",
+  "TardigradeROrange",
+  "PlectusnullBlack",
+  "PlectusnullOrange",
+  "EudorylaimusnullBlack",
+  "EudorylaimusnullOrange"
+))
+palette <- c("#BFB6D5" ,"#D34E86", "#E08D4E", "#DEE24C", "#84E1A7" , "#CD9493" ,"#D1CF8C", "#FFC446","774C64","#76E25D","#236519")
+# at frontD94ADC
+edes2 <- ggplot(dat2, aes(x = Sample, y = Abundance, fill = fct_reorder(Genus, Abundance, sum))) + geom_bar( stat = "identity")  + theme_classic(15) + scale_fill_manual(values=palette) 
+edes2 <- edes2+ geom_signif(comparisons = list(c("Mat_Black", "Mat_Orange")), annotation="a", y_position = c(0.48) ) + geom_signif(comparisons = list(c("Tardigrade_Black", "Eudorylaimus_Orange")), annotation="b", y_position = c(0.3))
+onlycyano <- edes2 + theme(axis.title.x=element_blank(),axis.text.x = element_text(color="black", margin = margin(t = 2)),axis.text.y = element_text(color="black"),legend.text = element_text(face = "italic")  )  + ylab("Relative Abundance") + labs(fill='Cyanobacteria Genera') +  scale_y_continuous(limits = c(0, 0.57), expand = c(0,0)) 
+myPalette <- c ( "black", "#ff7800", "black", "#ff7800","black", "#ff7800","black", "#ff7800")
+#onlycyano <- onlycyano + theme(axis.text.x = element_text(colour=myPalette))
+onlycyano <- onlycyano + theme(legend.text = element_text(size=10), legend.title = element_text(size=15), axis.text.x = element_text(angle = 25, hjust = 1))  + guides(fill=guide_legend(ncol=2))
+onlycyano <- onlycyano + ylab(expression(atop("Relative Abundance", paste("By Cyanobacteria Genus"))))
+onlycyanoNoL <- onlycyano + theme(legend.position = "none") 
+my_legend <- get_legend(onlycyano)
+CyanoLeg<- as_ggplot(my_legend)
+onlycyano <- onlycyano +scale_x_discrete(labels = c('Black Mat','Orange Mat','Black M Tardigrade','Orange M Tardigrade','Black P Tardigrade','Black R Tardigrade','Orange R Tardigrade','Black Plectus','Orange Plectus','Black Eudorylaimus','Orange Eudorylaimus'))
+
+
+palette <- distinctColorPalette(30)
+
+#graph per animal, genus now, only bacteria
+ph4<- PhOnlyClean10
+ph4 <-prune_samples(sample_sums(ph4)>=1, ph4)
+ps4<- transform_sample_counts(ph4, function(x) x / sum(x))
+ps <- tax_glom(ps4, "Genus")
+ps0 <- transform_sample_counts(ps, function(x) x / sum(x))
+ps1 <- merge_samples(ps0, "AnimalColorHapylo")
+#account for uneven numbersZ
+ps2 <- transform_sample_counts(ps1, function(x) x / sum(x))
+ps2 <- subset_taxa(ps2, Phylum=="Bacteroidota")
+dat2 <- data.table(psmelt(ps2))
+# convert Phylum to a character vector from a factor because R
+dat2$Genus <- as.character(dat2$Genus)
+# group dataframe by Phylum, calculate median rel. abundance
+dat2[, median := median(Abundance, na.rm = TRUE), 
+     by = "Genus"]
+# Change name to remainder of Phylum less than 1%
+dat2[(median <= 0.00029), Genus := "Other Genera "] #0.000199
+dat2$Sample <- factor(dat2$Sample, levels = c(
+  "MatnullBlack",
+  "MatnullOrange",
+  "TardigradeMBlack",
+  "TardigradeMOrange",
+  "TardigradePBlack",
+  "TardigradePOrange",
+  "TardigradeRBlack",
+  "TardigradeROrange",
+  "PlectusnullBlack",
+  "PlectusnullOrange",
+  "EudorylaimusnullBlack",
+  "EudorylaimusnullOrange"
+))
+palette <- c( "#817780", "#E4704C", "#DBB247","#6CE3E1", "#E3E0AE", "#DBAD81", "#648EE7" , "#7AA56F", "#E4ACDE", "#DC4ADB", "#76EA9A", "#5AE5BF", "#7B376E", "#82D25E", "#DDC3BE", "#E44C90", "#61A6DA",
+              "#8867DD", "#D2E588", "#6DEF4C", "#9F8ED2", "#D6818F", "#DC85DB", "#C2BEDF", "#843BE2", "#CDE4E4", "#ACE4C1", "#70C3D7", "#DEEA44")
+on front
+edes2 <- ggplot(dat2, aes(x = Sample, y = Abundance, fill = fct_reorder(Genus, Abundance, sum))) + geom_bar( stat = "identity")  + theme_classic(15) + scale_fill_manual(values=palette) 
+edes2 <- edes2+ geom_signif(comparisons = list(c("Mat_Black", "Mat_Orange")), annotation="b", y_position = c(0.3) ) + geom_signif(comparisons = list(c("Tardigrade_Black", "Plectus_Orange")), annotation="a", y_position = c(0.6))+ geom_signif(comparisons = list(c("Eudorylaimus_Black", "Eudorylaimus_Orange")), annotation="b", y_position = c(0.3) ) 
+onlybac <- edes2 + theme(axis.title.x=element_blank(),axis.text.x = element_text(color="black", margin = margin(t = 2)),axis.text.y = element_text(color="black"),legend.text = element_text(face = "italic")  )  + ylab("Relative Abundance") + labs(fill='Bacteroidota Genera') +  scale_y_continuous(limits = c(0, 0.65), expand = c(0,0)) 
+myPalette <- c ( "black", "#ff7800", "black", "#ff7800","black", "#ff7800","black", "#ff7800")
+#onlybac <- onlybac + theme(axis.text.x = element_text(colour=myPalette))
+onlybac <- onlybac + theme(legend.text = element_text(size=10), legend.title = element_text(size=15), axis.text.x = element_text(angle = 25, hjust = 1)) + guides(fill=guide_legend(ncol=2))
+onlybac
+onlybac <- onlybac + ylab(expression(atop("Relative Abundance", paste("By Bacteroidota Genus")))) +scale_x_discrete(labels = c('Black Mat','Orange Mat','Black M Tardigrade','Orange M Tardigrade','Black P Tardigrade','Black R Tardigrade','Orange R Tardigrade','Black Plectus','Orange Plectus','Black Eudorylaimus','Orange Eudorylaimus'))
+onlybacNoL <- onlybac + theme(legend.position = "none") 
+my_legend <- get_legend(onlybac)
+BacLeg<- as_ggplot(my_legend)
+
+
+#graph per animal, genus now, only protoeio
+ph4<- PhOnlyClean10
+ph4 <-prune_samples(sample_sums(ph4)>=1, ph4)
+ps4<- transform_sample_counts(ph4, function(x) x / sum(x))
+ps <- tax_glom(ps4, "Family")
+ps0 <- transform_sample_counts(ps, function(x) x / sum(x))
+ps1 <- merge_samples(ps0, "AnimalColorHapylo")
+#account for uneven numbersZ
+ps2 <- transform_sample_counts(ps1, function(x) x / sum(x))
+ps2 <- subset_taxa(ps2, Phylum=="Proteobacteria")
+dat2 <- data.table(psmelt(ps2))
+# convert Phylum to a character vector from a factor because R
+dat2$Family <- as.character(dat2$Family)
+# group dataframe by Phylum, calculate median rel. abundance
+dat2[, median := median(Abundance, na.rm = TRUE), 
+     by = "Family"]
+# Change name to remainder of Phylum less than 1%
+dat2[(median <= 0.0010), Family := "Other Familes "] #0.0008
+dat2$Sample <- factor(dat2$Sample, levels = c(
+  "MatnullBlack",
+  "MatnullOrange",
+  "TardigradeMBlack",
+  "TardigradeMOrange",
+  "TardigradePBlack",
+  "TardigradePOrange",
+  "TardigradeRBlack",
+  "TardigradeROrange",
+  "PlectusnullBlack",
+  "PlectusnullOrange",
+  "EudorylaimusnullBlack",
+  "EudorylaimusnullOrange"
+))
+palette <- c( "#E7CFD3", "#E5E4BB", "#68EAA0", "#60B79B","#DD87DD", "#ABAB9A" ,"#8AA662", "#DC4ADB", "#833AE2", "#DCAE41" ,"#D5E77D", "#7A4282" ,"#E6704B", "#DAAADC", "#BCE7DE" ,"#7E717D", "#DCA383",
+              "#E44B91", "#66EDDA" ,"#6DEF4C", "#64A5DA", "#8690DF", "#B7C5E0", "#D67D8F", "#B1E9AC", "#80D360", "#8968E1", "#DECA7E", "#DEEB40", "#69D3E4")
+edes2 <- ggplot(dat2, aes(x = Sample, y = Abundance, fill = fct_reorder(Family, Abundance, sum))) + geom_bar( stat = "identity")  + theme_classic(15) + scale_fill_manual(values=palette) 
+edes2 <- edes2+ geom_signif(comparisons = list(c("Mat_Black", "Plectus_Orange")), annotation="b", y_position = c(0.4) ) + geom_signif(comparisons = list(c("Eudorylaimus_Black", "Eudorylaimus_Orange")), annotation="a", y_position = c(0.69))
+onlypro <- edes2 + theme(axis.title.x=element_blank(),axis.text.x = element_text(color="black", margin = margin(t = 2)),axis.text.y = element_text(color="black")  )  + ylab("Relative Abundance") + labs(fill='Proteobacteria Families') +  scale_y_continuous(limits = c(0, 0.75), expand = c(0,0)) 
+myPalette <- c ( "black", "#ff7800", "black", "#ff7800","black", "#ff7800","black", "#ff7800")
+#onlypro <- onlypro + theme(axis.text.x = element_text(colour=myPalette))
+onlypro <- onlypro + theme(legend.text = element_text(size=10), legend.title = element_text(size=15), axis.text.x = element_text(angle = 25, hjust = 1)) +guides(fill=guide_legend(ncol=2))
+onlypro
+onlypro <- onlypro + ylab(expression(atop("Relative Abundance", paste("By Proteobacteria Family")))) +scale_x_discrete(labels = c('Black Mat','Orange Mat','Black M Tardigrade','Orange M Tardigrade','Black P Tardigrade','Black R Tardigrade','Orange R Tardigrade','Black Plectus','Orange Plectus','Black Eudorylaimus','Orange Eudorylaimus'))
+
+onlyproNoL <- onlypro + theme(legend.position = "none") 
+my_legend <- get_legend(onlypro)
+ProLeg<- as_ggplot(my_legend)              
+
+#palette
+
+
+#palette <- distinctColorPalette(30)
+0.0009
+
+#make into one big graph, good version
+rightright <- ggarrange(CyanoLeg, BacLeg, ProLeg,  ncol = 1, nrow = 3)
+right <- ggarrange(onlycyanoNoL, onlybacNoL, onlyproNoL,   labels = c("b.", "c.", "d."),  ncol = 1, nrow = 3)
+ggarrange(allphyla, right,rightright,  labels = c("a.",  "", ""), ncol = 3, nrow = 1, widths = c(1.5, 1, 0.7))
+
+
+ph4<- PhOnlyClean10
+ph4 <- subset_samples(ph4, Thapylo != "null") 
+
+RELPhOnlyClean10 <- transform_sample_counts(PhOnlyClean10, function(x) x / sum(x))
+RELph4 <- transform_sample_counts(ph4, function(x) x / sum(x))
+RELph4 <-RELPhOnlyClean10
+ 
+wunifrac_dist = phyloseq::distance(RELph4, method="bray", weighted=F)
+ordination = ordinate(RELph4, method="PCoA", distance=wunifrac_dist)
+plotbeta <- plot_ordination(RELph4, ordination, color="Thapylo", shape="Animal") + theme_classic(30)
+plotbeta <- plot_ordination(RELph4, ordination, color="Thapylo", shape="Color") + theme_classic(30)
+plotbeta <- plotbeta + geom_point( size = 3)
+plotbeta
+
+
+sampledf <- data.frame(sample_data(RELph4))
+adonis(wunifrac_dist ~ StreamName+Color+Animal, data = sampledf, permutations = 9999)
+
+
+
+
+
+##########otu overlap######
+
+PhOnlyClean10
+
+
+# subset a smaller dataset with just the samples you want
+eudmat = subset_samples(PhOnlyClean10Genus,Animal == "Eudorylaimus"| Animal == "Mat")
+
+
+# subset a smaller dataset with just the samples you want
+plectusmat = subset_samples(PhOnlyClean10Genus,Animal == "Plectus"| Animal == "Mat")
+
+
+# subset a smaller dataset with just the samples you want
+tarmat = subset_samples(PhOnlyClean10Genus,Animal == "Tardigrade"| Animal == "Mat")
+
+mat = subset_samples(PhOnlyClean10,Animal == "Mat")
+
+
+eudmat
+plectusmat
+tarmat
+mat
+
+install.packages("remotes")
+remotes::install_github("Russel88/MicEco")
+
+ps_venn(
+  tarmat,
+  "Animal", 
+  fraction = 0,
+  weight = FALSE,
+  relative = FALSE,
+  plot = TRUE
+)
+
+
+PhOnlyClean10Genus <- tax_glom(PhOnlyClean10, "Genus")
+
+ps_venn(
+  PhOnlyClean10,
+  "Animal", 
+  fraction = 0,
+  weight = TRUE,
+  relative = TRUE,
+  plot = TRUE
+)
+
+ps_venn(
+  PhOnlyClean10Genus,
+  "Animal", 
+  fraction = 0,
+  weight = FALSE,
+  relative = FALSE,
+  plot = TRUE
+)
+
+
+
+ps_venn(
+  eudmat,
+  "Animal", 
+  fraction = 0,
+  weight = FALSE,
+  relative = FALSE,
+  plot = TRUE
+)
+
+
+
+
+
+
+##### alpha diveirty stats#####
+alphastats <- alphadata
+head(alphastats)
+### statistics for this graph
+glm1 <- glm(Richness~ Animal*MatType*Stream, data=alphastats, family=gaussian())
+Anova(glm1, type=2) 
+sim_glm1 <- simulateResiduals(fittedModel = glm1, n = 250)
+plot(sim_glm1)
+summary(glm1)
+
+#shannon connected letters
+alphastats$Animal= as.factor(alphastats$Animal)
+
+glm1 <- glm(Richness~ Animal, data=alphastats, family=gaussian())
+summary(glm1)
+rsq(glm1)
+ph <- glht(glm1, mcp(Animal = "Tukey"))
+cld(ph)
+
+
+
+
+
