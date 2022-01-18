@@ -2055,9 +2055,9 @@ plot(sim_glm1)
 summary(glm1)
 
 #shannon connected letters
-alphastats$Animal= as.factor(alphastats$Animal)
+alphastats$AnimalColor= as.factor(alphastats$AnimalColor)
 
-glm1 <- glm(Richness~ Animal, data=alphastats, family=gaussian())
+glm1 <- glm(Richness~ AnimalColor, data=alphastats, family=gaussian())
 summary(glm1)
 rsq(glm1)
 ph <- glht(glm1, mcp(Animal = "Tukey"))
