@@ -2044,7 +2044,7 @@ ps_venn(
 
 
 
-##### alpha diveirty stats#####
+##### old alpha diveirty stats#####
 alphastats <- alphadata
 head(alphastats)
 ### statistics for this graph
@@ -2064,6 +2064,40 @@ ph <- glht(glm1, mcp(Animal = "Tukey"))
 cld(ph)
 
 
+
+### final stats for paper 
+ForPhil <- read.csv("Phylum.csv")
+head(ForPhil)
+
+ForPhil <- ForPhil[grepl("Proteobacteria", ForPhil$Phylum),]
+
+ForPhil$Abundance <- (ForPhil$Abundance*(length(ForPhil$Abundance)-1)+.5)/length(ForPhil$Abundance)
+
+ForPhil %>% group_by(Animal) %>% summarize(Abundnace=mean(Abundance,na.rm=T))
+
+hist(ForPhil$Abundance)
+
+pm1 <- glmmTMB(Abundance ~ Animal*Color+Color*StreamName+Animal*StreamName + (1|StreamName), data=ForPhil, family=beta_family(link="logit")  )
+#plot(pm1)
+Anova(pm1)
+summary(pm1)
+
+
+ForPhil <- read.csv("Genus.csv")
+head(ForPhil)
+
+ForPhil <- ForPhil[grepl("Phormidium", ForPhil$Genus),]
+
+ForPhil$Abundance <- (ForPhil$Abundance*(length(ForPhil$Abundance)-1)+.5)/length(ForPhil$Abundance)
+
+ForPhil %>% group_by(Animal) %>% summarize(Abundnace=mean(Abundance,na.rm=T))
+
+hist(ForPhil$Abundance)
+
+pm1 <- glmmTMB(Abundance ~ Animal*Color+Color*StreamName+Animal*StreamName + (1|StreamName), data=ForPhil, family=beta_family(link="logit")  )
+plot(pm1)
+Anova(pm1)
+summary(pm1)
 
 
 
