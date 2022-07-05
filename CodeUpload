@@ -1175,6 +1175,35 @@ final <- estimate_pd(PhOnlyClean10)
 write.csv(final,'FaithsPD.csv')
 
 
+####### Hill Numbers alpha diversity new, no faiths#######
+PhOnlyClean10 <- PhNoneg
+
+
+
+#Export the out table
+dat3= as(otu_table(PhOnlyClean10), "matrix")
+#Transform and make into a dataframe
+dat3t2 <- as.data.frame(t(dat3))
+head(dat3t2)
+
+#Make dataframe to put your results into
+otu_BF_div <- dat3t2[1:1]
+
+#Calcualte hill numbers
+otu_BF_div$rich <- hill_taxa(dat3t2, q=0)                                                                                               
+otu_BF_div$shan <- hill_taxa(dat3t2, q=1)                                                                                               
+otu_BF_div$simp <- hill_taxa(dat3t2, q=2)
+
+#Remove that first collum of junk
+otu_BF_div[1] <- NULL
+
+#your final results
+otu_BF_div
+
+write.csv(otu_BF_div,'AlphastatsPP.csv')
+
+
+
 ################## Import 18s Data and Filter ASV Table ########
 setwd("~/Desktop/125 dada 18s figure out/Post split/New taxnomy no uncultured")
 
