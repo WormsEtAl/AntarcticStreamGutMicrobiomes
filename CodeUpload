@@ -2,7 +2,7 @@ www.WormsEtAl.com/antarcticstreamgutmicrobiomes
 #Final Graphs and Statistics for "Host Identity is the Dominant Factor in the Assembly of Nematode and Tardigrade Gut Microbiomes in Taylor Valley Streams, Antarctica"
 
 
-################  16s Sequence Processing / Metabarcoding Pipeline ################
+################  16s Metabarcoding Pipeline in Qiime ################
 ##go to directory 
 cd Summer21/AGM_Dadaforwardtrim_primers_01
 
@@ -79,7 +79,60 @@ export BLASTMAT=$HOME/Software/blast-2.2.22/data
 
 nohup assign_taxonomy.py -i dna-sequences.fasta -r /home/genome/egendron/Projects/v138/uclust_stable/no-uncultured_ids.list_formatted_v138_again.fasta -t /home/genome/egendron/Projects/v138/uclust_stable/taxonomy_id_map.txt -o nounassigned &
 
-################  Load all libraries################
+
+################  18s Metabarcoding Pipeline in Qiime ################
+
+
+18swithnewplate3andnewplate4withprimers
+source activate qiime2-2021.8
+
+qiime tools import --type 'SampleData[PairedEndSequencesWithQuality]' --input-path /home/uflJPM/jparrufl/Summer21/NewPlate3Reads --input-format CasavaOneEightSingleLanePerSampleDirFmt --output-path demux01.qza
+
+
+change the tmp file and cut adapt stufff
+
+qiime demux summarize --i-data demux01.qza --o-visualization demux01.qzv
+qiime demux summarize --i-data 18strimmedk2.qza --o-visualization 18strimmedk2.qzv
+
+
+
+nohup qiime dada2 denoise-paired --i-demultiplexed-seqs 18strimmedk2.qza  --output-dir otu-dada7 --p-trim-left-f 0 --p-trim-left-r 0 --p-trunc-len-f 125 --p-trunc-len-r 125 --p-n-threads 0 &
+
+
+#10/26/21 no envo update to actually aling blast stats
+source activate qiime2-2021.8
+cd Summer21/18swithnewplate3andnewplate4withprimers/otu-dada4/otu-dada4
+
+
+#10/26/21 no envo update to actually aling blast stats
+/home/genome/egendron/Projects/v138/no_env_seqs/seqs_noenv.fasta
+/home/genome/egendron/Projects/v138/no_env_seqs/Silva_111_taxa_map_full_no_environmental.txt
+
+#10/26/21 no envo update to actually aling blast stats
+nohup blastn -query /home/uflJPM/jparrufl/Summer21/18swithnewplate3andnewplate4withprimers/otu-dada4/otu-dada4/dna-sequences.fasta -subject /home/genome/egendron/Projects/v138/no_env_seqs/seqs_noenv.fasta -out blastn_resultsotu4LIdatabasenoenvo.txt -max_target_seqs 1 -outfmt "6 qseqid sseqid qlen slen pident qcovs mismatch length gaps qstart qend sstart send bitscore evalue staxids" &
+
+#for otudada6 and 7 in place
+nohup blastn -query dna-sequences.fasta -subject /home/genome/egendron/Projects/v138/no_env_seqs/seqs_noenv.fasta -out blastn_resultsotu4LIdatabasenoenvo.txt -max_target_seqs 1 -outfmt "6 qseqid sseqid qlen slen pident qcovs mismatch length gaps qstart qend sstart send bitscore evalue staxids" &
+
+
+
+11/30/21 for otudada7 final pipeline now with excluding uncultured in addtion to enviro for final taxnomy assign to tables after spliting
+do this in place
+nohup blastn -query dna-sequences.fasta -subject /home/genome/egendron/Projects/v138/no_env_no_uncult_seqs/seqs_noenv_nouncult.fasta -out blastn_resultsotu4LIdatabasenoenvoANDNOcuncluted.txt -max_target_seqs 1 -outfmt "6 qseqid sseqid qlen slen pident qcovs mismatch length gaps qstart qend sstart send bitscore evalue staxids" &
+
+
+nohup blastn -query dna-sequences.fasta -subject /home/genome/egendron/Projects/v138/no_env_no_uncult_seqs/seqs_noenv_nouncult_edit1.fasta -out blastn_resultsotu4LIdatabasenoenvoANDNOcunclutededit1.txt -max_target_seqs 1 -outfmt "6 qseqid sseqid qlen slen pident qcovs mismatch length gaps qstart qend sstart send bitscore evalue staxids" &
+
+
+
+
+
+
+
+
+
+
+################  Load all R libraries ################
 library("ggplot2")
 library("vegan")
 library("DataCombine")
@@ -146,74 +199,17 @@ PhOnlyBac <- subset_taxa(PhRemoveNegSoil, Domain=="Bacteria")
 PhNotEud <- subset_samples(PhOnlyBac, Animal != "Eudorylaimus")
 PhNotEud <-prune_samples(sample_sums(PhNotEud)>=100, PhNotEud)
 PhOnlyEud <- subset_samples(PhOnlyBac, Animal == "Eudorylaimus")
-PhOnlyEud <-prune_samples(sample_sums(PhOnlyEud)>=10, PhOnlyEud)
+PhOnlyEud <-prune_samples(sample_sums(PhOnlyEud)>=100, PhOnlyEud)
 PhMerge <- merge_phyloseq(PhNotEud,PhOnlyEud)
 
 
-##Only clean nematods and mat
+##Only clean inverts and mat
 PhOnlyClean10 <- subset_samples(PhMerge, Wash != "dirty")
 
-##only dirty and mat
-PhOnlyDirty10 <- subset_samples(PhMerge, Wash != "clean")
 
 
 
-PhOnlyClean10
-PhNotPlectus <- subset_samples(PhOnlyClean10, Animal == "Tardigrade")
-
-################ Figure 1 ################
-Made in ArcGIS using McMurdo LTER datasets
-################ Figure 2 ################ 
-alphastats <- estimate_richness(PhOnlyClean10,measures=c("Shannon","Observed","Chao1"))
-write.csv(alphastats,'AlphaForPhilNoUncult.csv')
-
-
-
-AlphaForPhilNoUncultWithMetadata <- read.csv("~/Desktop/FinalPipelineNoUnassigned/AlphaForPhilNoUncultWithMetadata.csv")
-alphadata <- AlphaForPhilNoUncultWithMetadata
-alphadata$SpeciesIDMatType <- factor(alphadata$SpeciesIDMatType,levels = c( "MatBlack", "MatOrange", "TardigradeBlack","TardigradeOrange",
-                                                                            "PlectusBlack", "PlectusOrange", "EudorylaimusBlack", "EudorylaimusOrange"))
-p <- ggplot(alphadata, aes(x=SpeciesIDMatType, y=Shannon,fill=MatType)) +  geom_boxplot()
-p <- p +theme_classic(15,) + ylab("Shannon Diversity Index") 
-p <- p+ geom_signif(comparisons = list(c("MatBlack", "MatOrange")), annotation="a",tip_length = 0) + geom_signif(comparisons = list(c("TardigradeBlack", "TardigradeOrange")), annotation="b", tip_length = 0, y_position = c(4)) + geom_signif(comparisons = list(c("PlectusBlack", "PlectusOrange")), annotation="c", tip_length = 0, y_position = c(3.5)) + geom_signif(comparisons = list(c("EudorylaimusBlack", "EudorylaimusOrange")), tip_length = 0, annotation="d", y_position = c(2.5))
-p <- p + theme(axis.title.x=element_blank(), axis.text.x = element_text(color="black"), axis.text.y = element_text(color="black") )
-p <- p + scale_fill_manual(values=c("gray50", "#ff7800")) +scale_x_discrete(labels = c('Black Mat','Orange Mat', 'Tardigrade','Tardigrade','Plectus', 'Plectus','Eudorylaimus', 'Eudorylaimus'))  + theme(legend.position = "none") +scale_y_continuous(limits = c(0,7), expand = c(0,0))
-p
-myPalette <- c ( "black", "#ff7800", "black", "#ff7800","black", "#ff7800","black", "#ff7800")
-p <- p + theme(axis.text.x = element_text(colour=myPalette))
-Shannon <- p + theme(axis.text.x = element_text(angle = 25, hjust=1))
-Shannon +   geom_signif(comparisons = list(c("MatBlack", "MatOrange")))
-Shannon
-
-
-
-alphadata <- AlphaForPhilIMetadata
-alphadata$SpeciesIDMatType <- factor(alphadata$SpeciesIDMatType,levels = c( "MatBlack", "MatOrange", "TardigradeBlack","TardigradeOrange",
-                                                                            "PlectusBlack", "PlectusOrange", "EudorylaimusBlack", "EudorylaimusOrange"))
-p <- ggplot(alphadata, aes(x=SpeciesIDMatType, y=Richness,fill=MatType)) +  geom_boxplot()
-p <- p +theme_classic(15,) + ylab("Richness") 
-p <- p+ geom_signif(comparisons = list(c("MatBlack", "MatOrange")), annotation="a", tip_length = 0,  y_position = c(610)) + geom_signif(comparisons = list(c("TardigradeBlack", "TardigradeOrange")), annotation="b", tip_length = 0, y_position = c(350)) + geom_signif(comparisons = list(c("PlectusBlack",  "EudorylaimusOrange")), annotation="c", tip_length = 0, y_position = c(200))
-p <- p + theme(axis.title.x=element_blank(), axis.text.x = element_text(color="black"), axis.text.y = element_text(color="black") )
-p <- p + scale_fill_manual(values=c("gray50", "#ff7800")) +scale_x_discrete(labels = c('Black Mat','Orange Mat', 'Tardigrade','Tardigrade','Plectus', 'Plectus','Eudorylaimus', 'Eudorylaimus'))  + theme(legend.position = c(.9,.9)) + scale_y_continuous(limits = c(0,750), expand = c(0, 0)) + labs(fill='Mat Type') + ylab("ASV Richness")
-p
-myPalette <- c ( "black", "#ff7800", "black", "#ff7800","black", "#ff7800","black", "#ff7800")
-p <- p + theme(axis.text.x = element_text(colour=myPalette))
-Richness <- p + theme(axis.text.x = element_text(angle = 25, hjust=1))
-Richness
-
-
-Figure2 <- ggarrange(Shannon, Richness,  labels = c("a.",  "b."), ncol = 2, nrow = 1)
-Figure2
-
-
-
-
-############## Figure 2 with hill numbers##########
-
-alphastats <- estimate_richness(PhOnlyClean10,measures=c("Shannon","Observed","Chao1"))
-write.csv(alphastats,'AlphaForPhilNoUncult.csv')
-
-
+############## Figure 1 with hill numbers##########
 
 AlphaForPhilNoUncultWithMetadata <- read.csv("~/Desktop/FinalPipelineNoUnassigned/HillNumbers.csv")
 alphadata <- AlphaForPhilNoUncultWithMetadata
@@ -253,7 +249,7 @@ Figure2 <- ggarrange(Shannon, Faiths, Richness, labels = c("a.",  "b.", "c."), n
 Figure2
 
 
-################ Figure 3 ################ 
+################ Figure 2 ################ 
 
 #graph per animal all phyla
 ph4<- PhOnlyClean10
@@ -610,7 +606,7 @@ Figure3
 
 
 
-################ Figure 4 ################ 
+################ Figure 3 ################ 
 library(extrafont)
 library(extrafontdb)
 
@@ -627,8 +623,9 @@ OTU1 = as(otu_table(ps0), "matrix")
 write.csv(OTU1,'export.csv')
 
 Modify in excel to match their "unique" formatting
-https://huttenhower.sph.harvard.edu/galaxy/
 
+Run on https://huttenhower.sph.harvard.edu/galaxy/
+Download LDA values as CSV
   
 LDAforR <- read.csv("~/Desktop/FinalPipelineNoUnassigned/LDAforr.csv")
 LDAforR <- LDAforR
@@ -1021,79 +1018,19 @@ abund = pc[,3:ncol(pc)]
 timeS = pc$HostID
 inv = multipatt(abund, timeS, func = "r.g", control = how(nperm=9999))
 summary(inv)
-################ Alpha Diversity Stats Figure 2 ################ 
-s
+
 ################ 16s Beta Diversity Stats ################ 
 PhOnlyClean10 <- subset_samples(PhMerge, Wash != "dirty")
 PhOnlyClean10 <- subset_samples(PhOnlyClean10, Animal != "Mat")
 #PhOnlyClean10Backup <- PhOnlyClean10
 
 RELPhOnlyClean10 <- transform_sample_counts(PhOnlyClean10, function(x) x / sum(x))
-
-
-
-#this broke for some reason
-wunifrac_dist = phyloseq::distance(RELPhOnlyClean10, method="bray", weighted=F)
-ordination = ordinate(RELPhOnlyClean10, method="PCoA", distance=wunifrac_dist)
-plotbeta <- plot_ordination(RELPhOnlyClean10)
-plotbeta <- plot_ordination(RELPhOnlyClean10, ordination, color="Color", shape="Animal") + theme_classic(30)
-#plotbeta <- plot_ordination(RELPhOnlyClean10, ordination, color="Animal", shape="StreamName") + theme_classic(30)
-plotbeta <- plotbeta + geom_point( size = 3)
-plotbeta
-
-
 sampledf <- data.frame(sample_data(RELPhOnlyClean10))
-adonis(wunifrac_dist ~ StreamName+Animal+Color, data = sampledf, permutations = 9999)
-
-##from backup and is working but not sure what is different
-PhOnlyClean10 <- subset_samples(PhMerge, Wash != "dirty")
-PhOnlyClean10 <- subset_samples(PhOnlyClean10, Animal != "Mat")
-
-RELPhOnlyClean10 <- transform_sample_counts(PhOnlyClean10, function(x) x / sum(x))
+wunifrac_dist2 = phyloseq::distance(RELPhOnlyClean10, method="bray", weighted=F)
+adonis(wunifrac_dist2 ~ Animal*Color*StreamName, data = sampledf, permutations = 9999)
 
 
-#for only one fphlyum if needed
-RELPhOnlyClean10 <- subset_taxa(RELPhOnlyClean10, Phylum=="Cyanobacteria")
-RELPhOnlyClean10 <-prune_samples(sample_sums(RELPhOnlyClean10)>0, RELPhOnlyClean10)
-Proteobacteria
-Bacteroidota
-Cyanobacteria
-
-wunifrac_dist = phyloseq::distance(RELPhOnlyClean10, method="bray", weighted=F)
-ordination = ordinate(RELPhOnlyClean10, method="PCoA", distance=wunifrac_dist)
-plotbeta <- plot_ordination(RELPhOnlyClean10, ordination, color="Animal", shape="StreamName") + theme_classic(30)
-plotbeta <- plotbeta + geom_point( size = 3)
-plotbeta
-
-sampledf <- data.frame(sample_data(RELPhOnlyClean10))
-adonis(wunifrac_dist ~ StreamName+Animal+Color, data = sampledf, permutations = 9999)
-
-
-#final colors
-allGroupsColors<- c("grey27", "orange", "blue","red")
-allGroupsColors<- c("#FC1520","#0034F7","#187D1B","#BB28BA")
-allGroupsColors<- c("#FC1520","#187D1B","#BB28BA")
-#allGroupsColors <- c("#CED4FB","#EDD4F0","#D5E5D2","#EFCDCD")
-plotbeta + scale_color_manual(values = allGroupsColors)
-
-
-sampledf <- data.frame(sample_data(RELPhOnlyClean10))
-adonis(wunifrac_dist ~ Animal, data = sampledf, permutations = 9999)
-adonis(wunifrac_dist ~ StreamName, data = sampledf, permutations = 9999)
-adonis(wunifrac_dist ~ StreamName+Animal+Color, data = sampledf, permutations = 9999)
-adonis(wunifrac_dist ~ Color+StreamName, data = sampledf, permutations = 9999)
-
-wunifrac_dist = phyloseq::distance(RELPhOnlyClean10, method="bray", weighted=F)
-ordination = ordinate(RELPhOnlyClean10, method="PCoA", distance=wunifrac_dist)
-plotbeta <- plot_ordination(RELPhOnlyClean10, ordination, color="Color", shape="StreamName") + theme_classic(30)
-plotbeta <- plotbeta + geom_point( size = 7)
-plotbeta
-allGroupsColors<- c("black", "orange")
-plotbeta <- plotbeta + scale_color_manual(values = allGroupsColors)
-plotbeta +geom_polygon(aes(fill=Color))
-
-
-################ Relative Abundance Stats Figure 3 ################ 
+################ Relative Abundance Stats Figure 2 ################ 
 
 ForPhil <- read.csv("RelativeAbundancePhylaForPhilPhylaSmallOther.csv")
 ForPhil <- RelativeAbundancePhylaForPhilPhylaSmallOther
@@ -1104,9 +1041,6 @@ ForPhil <- ForPhil[!grepl("Bacteroidota", ForPhil$Phylum),]
 ForPhil <- ForPhil[!grepl("Cyanobacteria", ForPhil$Phylum),]
 ForPhil <- ForPhil[!grepl("Other", ForPhil$Phylum),]
 ForPhil <- ForPhil[!grepl("Proteobacteria", ForPhil$Phylum),]
-
-
-s
 
 ForPhil$SpeciesID= as.factor(ForPhil$SpeciesID)
 pm1<- glm(Abundance~SpeciesID,data =ForPhil, family = gaussian)
