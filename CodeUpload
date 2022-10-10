@@ -6,7 +6,7 @@
 #Line 137-230 Community processing (to import ASV table into Phyloseq and manipulate)
 #Line 231-264 Generate Alpha Diversity Metrics
 #Line 266-329 Statistics on community table
-#Line 340-900 Figure creation
+#Line 340-920 Figure creation
 
 
 
@@ -881,4 +881,39 @@ fig4b <- fig4a + geom_text(aes(label = Delim,y=4.07))
 
 fig4b 
 
+############ Ordination Based Figures###########
 
+
+
+#Using either Bacterialcommunity or Eukcommunity phlyoseq object
+
+
+#Make Relative Abundance
+RELPhOnlyClean10 <- transform_sample_counts(Bacterialcommunity, function(x) x / sum(x))
+
+#CreateBray distance matri
+wunifrac_dist2 = phyloseq::distance(RELPhOnlyClean10, method="bray", weighted=F)
+#Ordinate
+ordination1 = ordinate(RELPhOnlyClean10, method="NMDS", distance=wunifrac_dist2)
+
+#Plot 1
+allGroupsColors<- c("#f92d30", "#237b27", "#af39af","orange")
+plotbeta2 <- plot_ordination(RELPhOnlyClean10, ordination1, color="Animal")  + xlab("NMDS 1")+ ylab("NMDS 2") + theme_classic(30) +stat_ellipse( level = 0.45)+ labs(color="Microinvertebrate") + theme(legend.position="right", axis.text.x = element_text(color="black"), axis.text.y = element_text(color="black") )+ scale_color_manual(values = allGroupsColors) 
+my_legend2 <- get_legend(plotbeta2)
+plotbeta2
+plotbeta2 <-plotbeta2 +theme(legend.position = "none")  
+
+#Plot 2
+plotbeta1 <- plot_ordination(RELPhOnlyClean10, ordination1, color="Color") + theme_classic(30)  + labs(color="Mat Type") + theme(legend.position="right", axis.text.x = element_text(color="black"), axis.text.y = element_text(color="black") )
+allGroupsColors<- c("black", "orange")
+plotbeta1 <- plotbeta1 + xlab("NMDS 1")+ ylab("NMDS 2") +stat_ellipse( level = 0.95) + scale_color_manual(values = allGroupsColors) 
+plotbeta1
+
+my_legend1 <- get_legend(plotbeta1)
+plotbeta1 <-plotbeta1 +theme(legend.position = "none") 
+
+#Combine plots
+FigureSI <- ggarrange(plotbeta1, plotbeta2,  labels = c("a.",  "b."), ncol = 2, nrow = 1, widths = c(1, 1))
+FigureSIL <- ggarrange(my_legend1, my_legend2, ncol = 2, nrow = 1)
+FigureSIf <- ggarrange(FigureSI, FigureSIL, ncol = 1, nrow = 2, heights = c(1, 0.3))
+FigureSIf
